@@ -10,7 +10,6 @@ class ProjectBase(BaseModel):
     description: str
     moderator_personality: str
 
-
 class ProjectCreate(ProjectBase):
     pass
 
