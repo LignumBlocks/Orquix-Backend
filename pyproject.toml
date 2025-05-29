@@ -3,9 +3,12 @@ name = "orquix-backend"
 version = "0.1.0"
 description = "Orquix - AI Orchestration Backend"
 authors = ["Your Name <your.email@example.com>"]
+packages = [
+    { include = "app" }
+]
 
 [tool.poetry.dependencies]
-python = "^3.12"
+python = "^3.10"
 fastapi = "^0.110.0"
 sqlmodel = "^0.0.16"
 asyncpg = "^0.29.0"
@@ -35,14 +38,14 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.black]
 line-length = 88
-target-version = ["py312"]
+target-version = ["py310"]
 
 [tool.isort]
 profile = "black"
 multi_line_output = 3
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.10"
 strict = true
 warn_return_any = true
 warn_unused_configs = true

@@ -8,27 +8,28 @@ class Settings(BaseSettings):
     VERSION: str = "0.1.0"
     API_V1_STR: str = "/api"
     
-    POSTGRES_SERVER: str
-    POSTGRES_USER: str
-    POSTGRES_PASSWORD: str
-    POSTGRES_DB: str
-    POSTGRES_PORT: str = "5432"
+    # Database
+    ORQUIX_DB_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/orquix_db"
     
-    DATABASE_URL: Optional[str] = None
+    # App
+    ENVIRONMENT: str = "development"
+    DEBUG: bool = True
+    
+    # Auth
+    GOOGLE_CLIENT_ID: str = "tu_google_client_id"
+    GOOGLE_CLIENT_SECRET: str = "tu_google_client_secret"
+    JWT_PUBLIC_KEY: str = "clave_publica_de_nextauth"
+    JWT_ALGORITHM: str = "RS256"
     
     @property
     def sync_database_url(self) -> str:
-        if self.DATABASE_URL:
-            return self.DATABASE_URL
-        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        return self.ORQUIX_DB_URL.replace("postgresql+asyncpg://", "postgresql://")
     
     @property
     def async_database_url(self) -> str:
-        if self.DATABASE_URL:
-            return self.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
-        return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
-    
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
+        return self.ORQUIX_DB_URL
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True)
 
 
 settings = Settings() 
