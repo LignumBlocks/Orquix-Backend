@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.endpoints import projects
+from app.api.v1.context import router as context_router
 from app.core.config import settings
 from app.core.database import create_db_and_tables
 
@@ -30,4 +31,5 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(projects.router, prefix=f"{settings.API_V1_STR}/projects", tags=["projects"]) 
+app.include_router(projects.router, prefix=f"{settings.API_V1_STR}/projects", tags=["projects"])
+app.include_router(context_router, prefix=f"{settings.API_V1_STR}", tags=["context"]) 

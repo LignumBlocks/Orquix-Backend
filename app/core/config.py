@@ -1,15 +1,20 @@
-from typing import Optional
+from typing import Optional, List
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Orquix Backend"
-    VERSION: str = "0.1.0"
-    API_V1_STR: str = "/api"
+    PROJECT_VERSION: str = "1.0.0"
+    API_V1_STR: str = "/api/v1"
     
     # Database
-    ORQUIX_DB_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/orquix_db"
+    POSTGRES_SERVER: str
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_DB: str
+    POSTGRES_PORT: str
+    DATABASE_URL: Optional[str] = None
     
     # App
     ENVIRONMENT: str = "development"
@@ -21,13 +26,48 @@ class Settings(BaseSettings):
     JWT_PUBLIC_KEY: str = "clave_publica_de_nextauth"
     JWT_ALGORITHM: str = "RS256"
     
+    # Configuración de Context Manager
+    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"  # Modelo a usar para embeddings
+    EMBEDDING_DIMENSION: int = 384  # Dimensión de los embeddings
+    CHUNK_SIZE: int = 1000  # Tamaño aproximado de cada chunk en caracteres
+    CHUNK_OVERLAP: int = 200  # Solapamiento entre chunks en caracteres
+    MAX_RETRIES: int = 3  # Número máximo de reintentos para generación de embeddings
+    RETRY_DELAY: int = 1  # Tiempo de espera entre reintentos en segundos
+    
+    # Configuración de límites de contexto
+    MAX_CONTEXT_TOKENS: int = 4000  # Máximo número de tokens para el bloque de contexto
+    CONTEXT_TOKEN_BUFFER: int = 100  # Buffer para evitar exceder límites estrictos
+    CONTEXT_SEPARATOR: str = "\n\n---\n\n"  # Separador entre chunks en el bloque de contexto
+    
+    # JWT
+    SECRET_KEY: str
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    
+    # OpenAI
+    OPENAI_API_KEY: str
+    
+    # Anthropic (Claude)
+    ANTHROPIC_API_KEY: str
+    
+    # AI Configuration
+    DEFAULT_AI_TIMEOUT: int = 30  # segundos
+    DEFAULT_AI_MAX_RETRIES: int = 3
+    DEFAULT_AI_TEMPERATURE: float = 0.7
+    DEFAULT_AI_MAX_TOKENS: int = 1000
+    
     @property
     def sync_database_url(self) -> str:
-        return self.ORQUIX_DB_URL.replace("postgresql+asyncpg://", "postgresql://")
+        return self.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
     
     @property
     def async_database_url(self) -> str:
-        return self.ORQUIX_DB_URL
+        return self.DATABASE_URL
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not self.DATABASE_URL:
+            self.DATABASE_URL = f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True)
 

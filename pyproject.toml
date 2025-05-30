@@ -22,6 +22,9 @@ httpx = "^0.27.0"
 pgvector = "^0.2.5"
 alembic = "^1.13.1"
 uvicorn = {extras = ["standard"], version = "^0.27.1"}
+openai = "^1.12.0"
+tiktoken = "^0.6.0"
+psycopg2-binary = "^2.9.9"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
