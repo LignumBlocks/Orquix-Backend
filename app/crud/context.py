@@ -97,16 +97,20 @@ async def find_similar_chunks(
     
     # Añadimos el umbral de similitud si se especifica
     if similarity_threshold is not None:
-        query = query.where(cosine_similarity <= (1 - similarity_threshold))
+        # Crear una nueva expresión de texto para la comparación
+        threshold_condition = text("content_embedding <=> CAST(:embedding AS vector) <= :threshold")
+        query = query.where(threshold_condition)
     
     # Limitamos el número de resultados
     query = query.limit(top_k)
     
+    # Preparar parámetros
+    params = {"embedding": str(query_embedding)}
+    if similarity_threshold is not None:
+        params["threshold"] = similarity_threshold
+    
     # Ejecutamos la consulta
-    result = await db.execute(
-        query,
-        {"embedding": str(query_embedding)}  # Convertir a string para PostgreSQL
-    )
+    result = await db.execute(query, params)
     
     return result.scalars().all()
 
@@ -137,16 +141,20 @@ def find_similar_chunks_sync(
     
     # Añadimos el umbral de similitud si se especifica
     if similarity_threshold is not None:
-        query = query.where(cosine_similarity <= (1 - similarity_threshold))
+        # Crear una nueva expresión de texto para la comparación
+        threshold_condition = text("content_embedding <=> CAST(:embedding AS vector) <= :threshold")
+        query = query.where(threshold_condition)
     
     # Limitamos el número de resultados
     query = query.limit(top_k)
     
+    # Preparar parámetros
+    params = {"embedding": str(query_embedding)}
+    if similarity_threshold is not None:
+        params["threshold"] = similarity_threshold
+    
     # Ejecutamos la consulta
-    result = db.execute(
-        query,
-        {"embedding": str(query_embedding)}  # Convertir a string para PostgreSQL
-    )
+    result = db.execute(query, params)
     
     return result.scalars().all()
 
