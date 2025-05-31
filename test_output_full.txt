@@ -1,0 +1,36 @@
+
+🚀 Iniciando prueba de integración completa del flujo...
+
+👤 Paso 1: Creando usuario y proyecto de prueba...
+   ✅ Usuario y proyecto creados exitosamente
+
+📚 Paso 2: Procesando documentos de contexto...
+   ✅ Documento doc_fastapi: 1 chunks procesados
+   ✅ Documento tutorial_fastapi: 1 chunks procesados
+   📊 Total chunks almacenados: 2
+
+🔍 Paso 3: Procesando consulta de usuario...
+
+📋 Resultados de la consulta:
+   ⏱️  Tiempo total: 6930ms
+   🤖 Proveedores usados: ['openai', 'anthropic']
+   📚 Chunks de contexto: 1
+   📊 Similitud promedio: 71.14%
+
+🤖 Respuestas de IAs:
+
+   openai:
+   - Estado: success
+   - Latencia: 5431ms
+   - Respuesta: Para instalar y configurar FastAPI, sigue estos pasos:
+
+1. Asegúrate de tener Python 3.6 o superior....
+
+   anthropic:
+   - Estado: success
+   - Latencia: 3762ms
+   - Respuesta: De acuerdo al contexto proporcionado, los pasos para instalar y configurar FastAPI son:
+
+1. Asegurar...
+
+✅ Test de integración completado exitosamente!
