@@ -35,7 +35,7 @@ class QueryRequest(BaseModel):
     
     # Configuración de IAs
     temperature: Optional[float] = 0.7
-    max_tokens: Optional[int] = 1000
+    max_tokens: Optional[int] = 1200
     
     # Metadatos adicionales
     conversation_id: Optional[str] = None

@@ -68,7 +68,7 @@ class StandardAIResponse(BaseModel):
 class AIRequest(BaseModel):
     """Estructura estándar para solicitudes a IAs"""
     prompt: str
-    max_tokens: Optional[int] = 1000
+    max_tokens: Optional[int] = 1200
     temperature: Optional[float] = 0.7
     system_message: Optional[str] = None
     

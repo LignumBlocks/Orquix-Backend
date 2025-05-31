@@ -72,7 +72,7 @@ class AIModerator:
         logger.error("No se pudo inicializar ningún adaptador para síntesis")
     
     def _create_synthesis_prompt(self, responses: List[StandardAIResponse]) -> str:
-        """Crea el prompt optimizado para síntesis extractiva"""
+        """Crea el prompt optimizado para síntesis extractiva con detección de contradicciones factuales"""
         
         # Filtrar solo respuestas exitosas
         successful_responses = [
@@ -98,7 +98,11 @@ RESPUESTAS A SINTETIZAR:{responses_text}
 INSTRUCCIONES ESPECÍFICAS:
 1. Identifica los 2-3 temas o puntos clave principales cubiertos por el conjunto de respuestas
 2. Para cada tema/punto clave, resume brevemente la postura o aporte de cada IA que lo haya mencionado
-3. Señala contradicciones factuales directas y obvias entre las respuestas
+3. **DETECCIÓN DE CONTRADICCIONES FACTUALES**: Identifica y señala SOLO contradicciones factuales obvias y específicas entre las respuestas. Enfócate en datos concretos como:
+   - Números, fechas, precios o cantidades específicas que difieran claramente
+   - Afirmaciones directamente opuestas sobre hechos verificables
+   - Información contradictoria sobre ubicaciones, nombres o eventos específicos
+   - NO incluyas diferencias de opinión, enfoques o interpretaciones
 4. Formula una breve conclusión general si hay consenso claro, o nota sobre la divergencia principal
 5. Intenta referenciar de qué IA proviene cada punto específico (ej. "según IA1...")
 
@@ -110,22 +114,34 @@ FORMATO DE RESPUESTA:
 [Para cada tema, resume las posturas de cada IA]
 
 ## Contradicciones Detectadas
-[Lista contradicciones factuales directas, o "Ninguna contradicción significativa detectada"]
+[SOLO contradicciones factuales obvias. Formato: "Sobre [tema específico], las fuentes difieren: IA1 menciona [valor/hecho específico], mientras que IA2 indica [valor/hecho específico diferente]." Si no hay contradicciones factuales obvias, escribe "Ninguna contradicción factual obvia detectada"]
 
 ## Síntesis Final
 [Conclusión general de máximo 100 palabras]
+
+EJEMPLOS DE CONTRADICCIONES FACTUALES OBVIAS:
+✅ "Sobre el precio del producto, las fuentes difieren: IA1 menciona $50, mientras que IA2 indica $100"
+✅ "Sobre la fecha del evento, IA1 establece que fue en 2023, pero IA2 afirma que fue en 2024"
+✅ "Sobre la ubicación, IA1 dice que está en Madrid, mientras que IA2 indica que está en Barcelona"
+
+EJEMPLOS DE LO QUE NO SON CONTRADICCIONES FACTUALES:
+❌ Diferentes enfoques o métodos sugeridos
+❌ Variaciones en el nivel de detalle o profundidad
+❌ Diferentes ejemplos para ilustrar el mismo concepto
+❌ Matices o interpretaciones distintas
 
 RESTRICCIONES:
 - Máximo 250 palabras en total
 - Sé conciso pero preciso
 - Evita disclaimers innecesarios
 - Enfócate en el contenido factual
-- Mantén un tono neutral y analítico"""
+- Mantén un tono neutral y analítico
+- SOLO señala contradicciones factuales obvias y específicas"""
 
         return prompt
     
     def _extract_synthesis_components(self, synthesis_text: str) -> Dict[str, Any]:
-        """Extrae componentes estructurados de la síntesis"""
+        """Extrae componentes estructurados de la síntesis con enfoque en contradicciones factuales"""
         components = {
             "key_themes": [],
             "contradictions": [],
@@ -154,14 +170,20 @@ RESTRICCIONES:
                                 components["key_themes"].append(theme)
                 
                 elif "contradicciones" in section.lower():
-                    # Extraer contradicciones
+                    # Extraer contradicciones factuales específicas
                     lines = section.split("\n")[1:]
                     for line in lines:
                         line = line.strip()
-                        if line and not line.startswith("#") and "ninguna" not in line.lower():
-                            contradiction = line.lstrip("- *1234567890. ").strip()
-                            if contradiction:
-                                components["contradictions"].append(contradiction)
+                        if line and not line.startswith("#"):
+                            # Filtrar solo contradicciones reales, no el mensaje de "ninguna"
+                            if ("ninguna" not in line.lower() and 
+                                "no hay" not in line.lower() and
+                                "no se detect" not in line.lower() and
+                                len(line) > 20):  # Contradicciones reales son más largas
+                                
+                                contradiction = line.lstrip("- *1234567890. ").strip()
+                                if contradiction:
+                                    components["contradictions"].append(contradiction)
                 
                 elif "síntesis final" in section.lower() or "conclusión" in section.lower():
                     # Extraer áreas de consenso del texto final
@@ -170,38 +192,135 @@ RESTRICCIONES:
                     if "consenso" in consensus_text.lower() or "acuerdo" in consensus_text.lower():
                         components["consensus_areas"].append(consensus_text)
             
-            # Extraer referencias a IAs (IA1, IA2, etc.)
+            # Extraer referencias a IAs (IA1, IA2, etc.) con contexto
             import re
             ia_references = re.findall(r'IA\d+|según IA\d+', synthesis_text, re.IGNORECASE)
             for ref in ia_references:
                 ia_num = re.search(r'\d+', ref).group()
                 if f"IA{ia_num}" not in components["source_references"]:
                     components["source_references"][f"IA{ia_num}"] = []
+            
+            # Detectar patrones específicos de contradicciones factuales en el texto completo
+            contradiction_patterns = [
+                r'IA\d+\s+(?:menciona|dice|indica|establece|afirma)\s+([^,]+),?\s+(?:mientras que|pero|sin embargo)\s+IA\d+\s+(?:menciona|dice|indica|establece|afirma)\s+([^.]+)',
+                r'(?:sobre|respecto a)\s+([^,]+),\s+las fuentes difieren[^.]*IA\d+[^.]*IA\d+[^.]*',
+                r'IA\d+\s+[^.]*\$\d+[^.]*IA\d+\s+[^.]*\$\d+',  # Contradicciones de precio
+                r'IA\d+\s+[^.]*\d{4}[^.]*IA\d+\s+[^.]*\d{4}',  # Contradicciones de fecha
+            ]
+            
+            for pattern in contradiction_patterns:
+                matches = re.findall(pattern, synthesis_text, re.IGNORECASE)
+                for match in matches:
+                    if isinstance(match, tuple):
+                        contradiction_detail = f"Contradicción detectada automáticamente: {' vs '.join(match)}"
+                    else:
+                        contradiction_detail = f"Contradicción factual detectada: {match}"
+                    
+                    # Solo agregar si no está ya incluida
+                    if not any(contradiction_detail in existing for existing in components["contradictions"]):
+                        components["contradictions"].append(contradiction_detail)
         
         except Exception as e:
             logger.warning(f"Error extrayendo componentes de síntesis: {e}")
         
         return components
     
+    def _validate_synthesis_quality(self, synthesis_text: str) -> tuple[bool, str]:
+        """
+        Validación específica para Tarea 3.3: Formato y Validación de la Respuesta Sintetizada
+        
+        Returns:
+            tuple[bool, str]: (es_válida, razón_si_no_válida)
+        """
+        if not synthesis_text or not synthesis_text.strip():
+            return False, "Síntesis vacía o solo espacios en blanco"
+        
+        cleaned_text = synthesis_text.strip()
+        
+        # 1. Validar longitud mínima razonable
+        MIN_LENGTH = 80  # Reducido de 100 a 80 para ser más flexible
+        if len(cleaned_text) < MIN_LENGTH:
+            return False, f"Síntesis demasiado corta ({len(cleaned_text)} caracteres, mínimo {MIN_LENGTH})"
+        
+        # 2. Validar longitud máxima razonable (antes de otras validaciones complejas)
+        MAX_LENGTH = 2000  # Máximo 2000 caracteres
+        if len(cleaned_text) > MAX_LENGTH:
+            return False, f"Síntesis demasiado larga ({len(cleaned_text)} caracteres, máximo {MAX_LENGTH})"
+        
+        # 3. Validar que no sea solo texto repetitivo
+        words = cleaned_text.lower().split()
+        unique_words = set(words)
+        if len(words) > 8 and len(unique_words) / len(words) < 0.45:  # Menos del 45% de palabras únicas
+            return False, "Síntesis demasiado repetitiva"
+        
+        # 4. Detectar si es solo un disclaimer del LLM
+        disclaimer_phrases = [
+            "no puedo", "no soy capaz", "no tengo la capacidad",
+            "lo siento", "disculpa", "perdón",
+            "no tengo acceso", "no puedo acceder",
+            "como modelo de lenguaje", "como IA", "soy una IA",
+            "no puedo proporcionar", "no puedo ofrecer",
+            "disclaimer", "aviso", "descargo de responsabilidad",
+            "consulta a un profesional", "busca asesoría profesional",
+            "no soy un experto", "no soy profesional"
+        ]
+        
+        disclaimer_count = sum(1 for phrase in disclaimer_phrases if phrase.lower() in cleaned_text.lower())
+        total_words = len(cleaned_text.split())
+        
+        # Si más del 30% del contenido son disclaimers, es inválida
+        if disclaimer_count > 3 or (disclaimer_count > 1 and total_words < 30):
+            return False, f"Síntesis dominada por disclaimers ({disclaimer_count} frases de disclaimer detectadas)"
+        
+        # 5. Validar que tenga contenido sustancial
+        # Debe tener al menos algunas oraciones completas
+        sentences = [s.strip() for s in cleaned_text.split('.') if s.strip() and len(s.strip()) > 10]
+        if len(sentences) < 2:  # Reducido de 3 a 2 para ser más flexible
+            return False, f"Síntesis con muy pocas oraciones completas ({len(sentences)})"
+        
+        # 6. Validar que tenga estructura mínima (para síntesis estructuradas)
+        has_structure = any(marker in cleaned_text for marker in ['##', '**', '- ', '1.', '2.', '•'])
+        has_content_words = any(word in cleaned_text.lower() for word in [
+            'según', 'menciona', 'indica', 'afirma', 'establece', 'tema', 'punto', 'aspecto', 'python'
+        ])
+        
+        if not has_structure and not has_content_words and len(words) > 30:
+            return False, "Síntesis carece de estructura o contenido analítico identificable"
+        
+        return True, "Síntesis válida"
+    
     def _assess_synthesis_quality(self, synthesis_text: str, components: Dict[str, Any]) -> SynthesisQuality:
-        """Evalúa la calidad de la síntesis generada"""
+        """Evalúa la calidad de la síntesis generada (usando validación de Tarea 3.3)"""
+        
+        # Primero usar la validación formal de la Tarea 3.3
+        is_valid, validation_reason = self._validate_synthesis_quality(synthesis_text)
+        
+        if not is_valid:
+            logger.warning(f"Síntesis no válida: {validation_reason}")
+            return SynthesisQuality.FAILED
+        
+        # Si pasa la validación básica, evaluar calidad más detallada
         if not synthesis_text or len(synthesis_text.strip()) < 50:
             return SynthesisQuality.FAILED
         
-        # Contar disclaimers excesivos
+        # Contar disclaimers excesivos (criterio más estricto post-validación)
         disclaimer_words = ["no puedo", "no sé", "disculpa", "lo siento", "disclaimer"]
         disclaimer_count = sum(1 for word in disclaimer_words if word in synthesis_text.lower())
         
         if disclaimer_count > 2:
             return SynthesisQuality.LOW
         
-        # Verificar estructura
+        # Verificar estructura y contenido
         has_themes = len(components["key_themes"]) > 0
         has_structure = "##" in synthesis_text or len(synthesis_text.split("\n")) > 3
+        has_contradictions_analysis = len(components["contradictions"]) > 0 or "contradicciones" in synthesis_text.lower()
+        has_references = len(components["source_references"]) > 0 or any(ref in synthesis_text.lower() for ref in ["ia1", "ia2", "según"])
         
-        if has_themes and has_structure and len(synthesis_text) > 100:
+        # Criterios para HIGH quality
+        if (has_themes and has_structure and has_references and len(synthesis_text) > 150):
             return SynthesisQuality.HIGH
-        elif has_structure or has_themes:
+        # Criterios para MEDIUM quality  
+        elif (has_structure or has_themes) and len(synthesis_text) > 100:
             return SynthesisQuality.MEDIUM
         else:
             return SynthesisQuality.LOW

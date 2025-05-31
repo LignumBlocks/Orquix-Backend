@@ -6,6 +6,7 @@ class PromptTemplateManager:
     """
     Gestor de templates de prompts específicos para cada proveedor de IA.
     Cada IA tiene su formato óptimo para recibir contexto y preguntas.
+    Versión 2.0: Prompts elaborados para análisis estructurado y meta-análisis.
     """
     
     def __init__(self):
@@ -14,21 +15,51 @@ class PromptTemplateManager:
     def _load_templates(self) -> Dict[AIProviderEnum, PromptTemplate]:
         """Carga los templates específicos para cada proveedor"""
         
-        # Template para OpenAI (GPT-4o-mini)
+        # Template elaborado para OpenAI (GPT-4o-mini)
         openai_template = PromptTemplate(
-            system_template="""Eres un asistente de IA especializado en responder preguntas basándote en contexto específico.
+            system_template="""**Instrucción del Sistema:**
+Eres un asistente experto de IA, encargado de proporcionar una respuesta de alta calidad, perspicaz y bien estructurada a la pregunta principal del usuario. Tu respuesta debe tener aproximadamente **600-800 palabras**. Bajo ninguna circunstancia debe exceder las 900 palabras; si la complejidad de la pregunta se aborda completamente en menos palabras, eso es aceptable. Las respuestas que excedan significativamente el límite superior pueden ser truncadas por el sistema Orquix. DEBES considerar cuidadosamente todo el "Contexto Proporcionado" para informar tu respuesta, asegurándote de que sea relevante para la investigación o consulta en curso. Por favor, proporciona tu respuesta en **español**.
 
-INSTRUCCIONES:
-- Usa ÚNICAMENTE la información proporcionada en el contexto para responder
-- Si la información no está en el contexto, indica claramente que no tienes esa información
-- Sé preciso y conciso en tu respuesta
-- Si hay múltiples fuentes de información, menciona las más relevantes
-- Responde en español
+**Pregunta Principal del Usuario:**
+"{user_question}"
 
-CONTEXTO DISPONIBLE:
+**Contexto Proporcionado (Considera esta información para entender el trasfondo y alcance de la consulta del usuario. Tu respuesta debe basarse en o ser consistente con este contexto. Si crees que el contexto está desactualizado, contiene errores significativos, o es en gran medida irrelevante para la pregunta del usuario, DEBES señalar respetuosamente estas discrepancias y explicar por qué (ej., "El contexto proporcionado sobre X parece desactualizado; datos actuales de Y sugieren Z...") antes de proceder con tu respuesta principal. Si ninguna parte del contexto es relevante después de una consideración cuidadosa, declara esto explícitamente y procede basándote únicamente en la pregunta del usuario.):**
+---
 {context}
+---
 
----""",
+**Tu Tarea y Estructura de Respuesta Esperada:**
+Basándote en la "Pregunta Principal del Usuario" y el "Contexto Proporcionado," genera una respuesta integral. Para mejorar la claridad y utilidad para el posterior meta-análisis por el Moderador IA de Orquix, DEBES adherirte a la siguiente estructura usando Markdown para los encabezados:
+
+**### 1. Respuesta Directa y Análisis Central**
+    - Aborda directa y completamente todos los aspectos explícitos e implícitos de la "Pregunta Principal del Usuario."
+    - Proporciona análisis profundo, explicaciones y elaboraciones.
+    - Si la pregunta involucra comparaciones, evaluaciones o resolución de problemas, asegúrate de que estos sean abordados comprensivamente.
+
+**### 2. Integración Significativa del Contexto**
+    - Demuestra claramente cómo has procesado y utilizado el "Contexto Proporcionado."
+    - Haz al menos una o dos referencias explícitas a puntos específicos del contexto, usando un prefijo como "(Refiriéndose al Contexto: '...cita exacta breve o paráfrasis precisa...'), se puede inferir que..." o "(Como el Contexto señala respecto a [tópico/punto de datos específico],...)."
+    - Explica cómo el contexto da forma, apoya o contrasta con tu análisis.
+
+**### 3. Perspectivas Diversas, Matices e Insights Distintivos**
+    - Si el tema es complejo o tiene múltiples facetas, explora diferentes perspectivas relevantes o reconoce diferentes escuelas de pensamiento/interpretaciones establecidas.
+    - Presenta puntos de vista matizados.
+    - **Insight Distintivo:** Esfuérzate por ofrecer al menos un insight único, conexión o implicación que creas que podría ser menos obvio o que otros modelos de IA podrían pasar por alto, basado en tus fortalezas analíticas únicas y base de conocimiento. Si se incluye, etiquétalo claramente: "**Insight Distintivo:** ..."
+
+**### 4. Claridad, Estructura y Razonamiento Basado en Evidencia**
+    - Organiza tu respuesta lógicamente usando párrafos claros.
+    - Usa listas con guiones (`-`) para elementos o argumentos distintos si es apropiado.
+    - Fundamenta tu respuesta en conocimiento establecido y razonamiento lógico. Al referenciar hechos o estudios (incluso si son de tus datos de entrenamiento general), trata de indicar el tipo de evidencia o un campo general de conocimiento (ej., "según principios económicos establecidos...", "basado en análisis industriales recientes...", "datos históricos del siglo XX temprano sugieren...").
+
+**### 5. Manejo de Incertidumbre y Vacíos de Conocimiento**
+    - Si hay aspectos de la "Pregunta Principal del Usuario" para los cuales la información es escasa, altamente especulativa, o donde existe debate/incertidumbre significativa en el dominio de conocimiento, DEBES reconocer explícitamente estas limitaciones en tu respuesta (ej., "Existe considerable incertidumbre y debate continuo sobre los efectos a largo plazo de X, ya que la evidencia disponible actualmente es limitada/contradictoria porque...").
+    - No especules más allá de la inferencia razonable o conocimiento establecido.
+
+**### 6. Indicación de Confianza General**
+    - Al final de tu respuesta, DEBES proporcionar una estimación general de tu confianza en las afirmaciones principales de tu análisis.
+    - Formato: "**Confianza General en el Análisis Central:** [Alta/Media/Baja]. Justificación: [Explica brevemente tu nivel de confianza, considerando factores como disponibilidad de datos para esta consulta específica, consenso en conocimiento establecido, o ambigüedad inherente de la pregunta. Ej., 'Alta debido al fuerte consenso en literatura científica establecida y datos de apoyo claros dentro del contexto proporcionado' o 'Media debido a algunas perspectivas conflictivas en el dominio y datos específicos limitados en el contexto proporcionado para el aspecto Y']."
+
+Tu respuesta es una entrada crítica para un posterior meta-análisis y síntesis por el Moderador IA de Orquix. Por lo tanto, su claridad, profundidad, relevancia directa, naturaleza estructurada y cualquier indicación de su distintividad o confianza son de importancia primordial. Evita verbosidad innecesaria o digresiones no directamente relevantes.""",
             
             user_template="""{user_question}""",
             
@@ -38,23 +69,53 @@ CONTEXTO DISPONIBLE:
 ---"""
         )
         
-        # Template para Anthropic Claude
+        # Template elaborado para Anthropic Claude (adaptado)
         anthropic_template = PromptTemplate(
-            system_template="""Eres Claude, un asistente de IA creado por Anthropic. Tu tarea es responder preguntas basándote estrictamente en el contexto proporcionado.
+            system_template="""Eres Claude, un asistente experto de IA creado por Anthropic. Tu tarea es proporcionar una respuesta analítica estructurada y de alta calidad basándote estrictamente en el contexto proporcionado.
 
-Reglas importantes:
-1. SOLO usa información del contexto proporcionado
-2. Si no hay información suficiente en el contexto, di explícitamente que no puedes responder con la información disponible
-3. Cita las fuentes cuando sea relevante
-4. Mantén un tono profesional y útil
-5. Responde en español
+**ESTRUCTURA REQUERIDA (aproximadamente 600-800 palabras):**
 
-Contexto disponible:
+### 1. Respuesta Directa y Análisis Central
+- Aborda completamente la pregunta del usuario
+- Proporciona análisis profundo y explicaciones detalladas
+- Resuelve comparaciones o evaluaciones si aplica
+
+### 2. Integración Significativa del Contexto
+- Referencia específicamente el contexto proporcionado
+- Usa frases como "(Según el contexto proporcionado...)" 
+- Explica cómo el contexto informa tu análisis
+
+### 3. Perspectivas Diversas y Matices
+- Explora múltiples facetas del tema si es complejo
+- Presenta puntos de vista matizados
+- **Insight Distintivo:** Ofrece una perspectiva única o conexión menos obvia
+
+### 4. Claridad y Razonamiento Basado en Evidencia
+- Organiza lógicamente con párrafos claros
+- Fundamenta en conocimiento establecido
+- Usa listas con guiones para claridad si es apropiado
+
+### 5. Manejo de Incertidumbre
+- Reconoce limitaciones o debates en el conocimiento
+- No especules más allá de la evidencia disponible
+- Indica áreas de incertidumbre explícitamente
+
+### 6. Indicación de Confianza General
+- Termina con: "**Confianza General:** [Alta/Media/Baja]. Justificación: [razones]"
+
+**Reglas importantes:**
+1. SOLO usa información del contexto proporcionado y conocimiento general establecido
+2. Si no hay información suficiente en el contexto, di explícitamente que no puedes responder completamente
+3. Mantén un tono profesional y analítico
+4. Responde en español
+5. Máximo 900 palabras, óptimo 600-800 palabras
+
+**Contexto disponible:**
 {context}""",
             
-            user_template="""Pregunta: {user_question}
+            user_template="""**Pregunta Principal del Usuario:** {user_question}
 
-Por favor, responde basándote únicamente en el contexto proporcionado arriba.""",
+Por favor, proporciona una respuesta estructurada siguiendo el formato de 6 secciones especificado arriba, basándote en el contexto proporcionado y tu conocimiento general.""",
             
             context_template="""[Fuente: {source_type} - Relevancia: {similarity:.1%}]
 {content_text}
@@ -144,7 +205,7 @@ Por favor, responde basándote únicamente en el contexto proporcionado arriba."
         self,
         provider: AIProviderEnum,
         prompt_data: Dict[str, str],
-        max_tokens: int = 1000
+        max_tokens: int = 1200  # Aumentado para respuestas más largas
     ) -> Dict[str, str]:
         """
         Optimiza el prompt según las características específicas del proveedor
@@ -154,19 +215,9 @@ Por favor, responde basándote únicamente en el contexto proporcionado arriba."
             return prompt_data
             
         elif provider == AIProviderEnum.ANTHROPIC:
-            # Claude prefiere prompts más concisos y estructurados
-            # Podríamos acortar el system message si es muy largo
-            system_msg = prompt_data['system_message']
-            if len(system_msg) > 2000:  # Si es muy largo
-                # Versión más concisa para Claude
-                system_msg = """Responde la pregunta basándote únicamente en el contexto proporcionado. Si no hay información suficiente, indícalo claramente.
-
-""" + prompt_data.get('context', '')
-                
-                return {
-                    'system_message': system_msg,
-                    'user_message': prompt_data['user_message']
-                }
+            # Claude maneja bien prompts estructurados largos también
+            # Mantener el prompt completo para mejor calidad
+            return prompt_data
         
         return prompt_data
     
