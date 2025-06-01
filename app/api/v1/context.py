@@ -4,7 +4,7 @@ from sqlmodel import Session
 from uuid import UUID
 from pydantic import BaseModel, Field
 
-from app.core.database import get_session
+from app.core.database import get_db
 from app.services.context_manager import ContextManager, EmbeddingError
 from app.schemas.context import ChunkResponse, ChunkWithSimilarity, ContextBlock
 from app.crud.context import get_project_chunks, delete_project_chunks
@@ -122,7 +122,7 @@ class ContextBlockRequest(BaseModel):
 )
 async def process_text(
     request: TextProcessRequest,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ) -> List[ChunkResponse]:
     context_manager = ContextManager(db)
     try:
@@ -162,7 +162,7 @@ async def process_text(
 )
 async def search_context(
     request: SearchRequest,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ) -> List[ChunkWithSimilarity]:
     context_manager = ContextManager(db)
     try:
@@ -194,7 +194,7 @@ async def search_context(
 async def get_chunks(
     project_id: UUID,
     source_type: str | None = None,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ) -> List[ChunkResponse]:
     chunks = await get_project_chunks(db, project_id, source_type)
     return chunks
@@ -207,7 +207,7 @@ async def get_chunks(
 async def delete_chunks(
     project_id: UUID,
     source_type: str | None = None,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ) -> dict:
     deleted_count = await delete_project_chunks(db, project_id, source_type)
     return {
@@ -233,7 +233,7 @@ async def delete_chunks(
 )
 async def generate_context_block(
     request: ContextBlockRequest,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ) -> ContextBlock:
     context_manager = ContextManager(db)
     try:
