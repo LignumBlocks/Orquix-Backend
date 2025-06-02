@@ -1,0 +1,45 @@
+{
+  "name": "orquix-fullstack",
+  "version": "1.0.0",
+  "description": "Orquix - Sistema de IA con Moderador Inteligente (Fullstack)",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"yarn dev:backend\" \"yarn dev:frontend\"",
+    "dev:backend": "cd backend && poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "dev:frontend": "cd frontend && yarn dev",
+    "build": "yarn build:frontend",
+    "build:frontend": "cd frontend && yarn build",
+    "test": "yarn test:backend && yarn test:frontend",
+    "test:backend": "cd backend && poetry run pytest",
+    "test:frontend": "cd frontend && yarn test",
+    "lint": "cd frontend && yarn lint",
+    "preview": "cd frontend && yarn preview",
+    "install:backend": "cd backend && poetry install",
+    "install:frontend": "cd frontend && yarn install",
+    "setup": "yarn install:backend && yarn install:frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "yarn": ">=1.22.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tu-usuario/orquix-backend.git"
+  },
+  "keywords": [
+    "ai",
+    "orchestrator",
+    "fastapi",
+    "react",
+    "vite",
+    "tailwind"
+  ],
+  "author": "Tu Nombre",
+  "license": "MIT"
+}

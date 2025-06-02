@@ -1,1 +1,33 @@
+# Backend Python
+backend/.env
+backend/__pycache__/
+backend/.pytest_cache/
+backend/venv/
+backend/*.egg-info/
+backend/.coverage
+backend/htmlcov/
+
+# Frontend Node.js
+frontend/.next/
+frontend/node_modules/
+frontend/.env.local
+frontend/.env.production.local
+frontend/dist/
+frontend/build/
+
+# Shared
+node_modules/
+.DS_Store
+.cursor/
+*.log
 .env
+.env.local
+.env.production
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
