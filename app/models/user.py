@@ -14,7 +14,7 @@ class User(BaseModel, table=True):
     google_id: str = Field(unique=True, index=True)
     avatar_url: str
 
-    # Relationships
+    # Relationships según esquema MVP
     projects: List["Project"] = Relationship(back_populates="user")
-    research_sessions: List["ResearchSession"] = Relationship(back_populates="user")
+    interaction_events: List["InteractionEvent"] = Relationship(back_populates="user")
     context_chunks: List["ContextChunk"] = Relationship(back_populates="user") 

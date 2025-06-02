@@ -21,7 +21,7 @@ class Project(BaseModel, table=True):
     moderator_length_penalty: float = Field(default=0.5)
     archived_at: Optional[datetime] = Field(default=None)
 
-    # Relationships
+    # Relationships según esquema MVP
     user: User = Relationship(back_populates="projects")
-    research_sessions: List["ResearchSession"] = Relationship(back_populates="project")
+    interaction_events: List["InteractionEvent"] = Relationship(back_populates="project")
     context_chunks: List["ContextChunk"] = Relationship(back_populates="project") 

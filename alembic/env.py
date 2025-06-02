@@ -9,12 +9,11 @@ from alembic import context
 from app.core.config import settings
 from sqlmodel import SQLModel
 
-# Importamos los modelos para que se registren con SQLModel
-from app.models.models import (
+# Importamos los modelos MVP para que se registren con SQLModel
+from app.models import (
     User,
     Project,
-    ResearchSession,
-    InteractionStep,
+    InteractionEvent,
     IAResponse,
     ModeratedSynthesis,
     ContextChunk
