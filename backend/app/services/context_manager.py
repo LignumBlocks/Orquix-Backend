@@ -1,13 +1,15 @@
-from typing import List, Optional, Tuple
-import numpy as np
-from openai import AsyncOpenAI
-from sqlmodel import Session
+from typing import List, Dict, Any, Tuple, Optional
+from uuid import UUID
 import asyncio
 import logging
-from uuid import UUID
+from datetime import datetime
+import numpy as np
 import tiktoken
 
-from app.models.context_chunk import ContextChunk
+from openai import AsyncOpenAI
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from app.models.models import ContextChunk
 from app.schemas.context import ChunkCreate, ChunkWithSimilarity, ContextBlock
 from app.crud.context import create_context_chunk, find_similar_chunks
 from app.core.config import settings
@@ -23,7 +25,7 @@ class TokenLimitError(Exception):
     pass
 
 class ContextManager:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
         # Inicializamos el cliente de OpenAI
         self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)

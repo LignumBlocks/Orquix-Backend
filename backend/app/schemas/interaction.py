@@ -2,6 +2,7 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
 from uuid import UUID
+from app.schemas.query import ContextInfo
 
 from app.schemas.ai_response import StandardAIResponse
 from app.services.ai_moderator import ModeratorResponse
@@ -56,6 +57,8 @@ class QueryResponse(BaseModel):
     recommendations: List[str] = Field(default_factory=list, description="Recomendaciones del moderador")
     suggested_questions: List[str] = Field(default_factory=list, description="Preguntas sugeridas")
     research_areas: List[str] = Field(default_factory=list, description="Áreas de investigación")
+    
+    context_info: Optional[ContextInfo] = Field(default=None, description="Información del contexto utilizado")
     
     # Metadatos
     individual_responses: List[StandardAIResponse] = Field(..., description="Respuestas individuales de cada IA")

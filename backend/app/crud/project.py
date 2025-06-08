@@ -16,6 +16,8 @@ async def create_project(
         name=obj_in.name,
         description=obj_in.description,
         moderator_personality=obj_in.moderator_personality,
+        moderator_temperature=obj_in.moderator_temperature,
+        moderator_length_penalty=obj_in.moderator_length_penalty,
     )
     db.add(db_obj)
     await db.commit()
@@ -35,6 +37,7 @@ async def get_projects_by_user(
     statement = (
         select(Project)
         .where(Project.user_id == user_id)
+        .where(Project.deleted_at.is_(None))
         .offset(skip)
         .limit(limit)
         .order_by(Project.created_at.desc())

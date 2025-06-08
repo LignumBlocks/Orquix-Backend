@@ -81,6 +81,10 @@ allowed_origins = [
 if settings.ENVIRONMENT == "development":
     allowed_origins.extend([
         "http://localhost:3001",
+        "http://localhost:5173",  # Vite dev server
+        "http://localhost:5174",  # Vite dev server alternativo
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
         "http://localhost:8080",
         "http://localhost:8000",
     ])

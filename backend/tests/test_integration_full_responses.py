@@ -35,13 +35,14 @@ async def test_complete_integration_with_full_responses():
         try:
             # Crear usuario de prueba
             session.execute(sql_text("""
-                INSERT INTO users (id, created_at, updated_at, email, name, google_id)
-                VALUES (:user_id, NOW(), NOW(), :email, :name, :google_id)
+                INSERT INTO users (id, created_at, updated_at, email, name, google_id, avatar_url)
+                VALUES (:user_id, NOW(), NOW(), :email, :name, :google_id, :avatar_url)
             """), {
                 "user_id": str(user_id),
                 "email": f"test_{user_id}@example.com",
                 "name": "Usuario de Prueba",
-                "google_id": f"google_{user_id}"
+                "google_id": f"google_{user_id}",
+                "avatar_url": "https://example.com/avatar.jpg"
             })
             
             # Crear proyecto de prueba

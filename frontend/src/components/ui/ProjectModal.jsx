@@ -1,10 +1,19 @@
 import { useState } from 'react'
-import { XIcon, PlusIcon, TrashIcon, DownloadIcon, RotateCcwIcon, ChevronDownIcon, ChevronRightIcon } from 'lucide-react'
+import { XIcon, PlusIcon, TrashIcon, DownloadIcon, RotateCcwIcon, ChevronDownIcon, ChevronRightIcon, EditIcon, SaveIcon } from 'lucide-react'
+import useAppStore from '../../store/useAppStore'
 
 const ProjectModal = ({ project, onClose }) => {
   const [contextFilesExpanded, setContextFilesExpanded] = useState(true)
   const [backupsExpanded, setBackupsExpanded] = useState(true)
   const [expandedBackups, setExpandedBackups] = useState(new Set(['2024-01-15']))
+  const [isEditingProject, setIsEditingProject] = useState(false)
+  const [editData, setEditData] = useState({
+    name: project?.name || '',
+    description: project?.description || ''
+  })
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const { updateProject, deleteProject, setActiveProject } = useAppStore()
 
   const contextFiles = [
     { id: 1, name: 'fintech_trends.pdf', size: '2.3 MB', type: 'PDF' },
@@ -54,21 +63,145 @@ const ProjectModal = ({ project, onClose }) => {
     }
   }
 
+  const handleEditProject = async () => {
+    if (!editData.name.trim()) return
+
+    setIsSubmitting(true)
+    try {
+      await updateProject(project.id, {
+        name: editData.name.trim(),
+        description: editData.description.trim()
+      })
+      
+      if (window.showToast) {
+        window.showToast.success('Proyecto actualizado exitosamente')
+      }
+      
+      setIsEditingProject(false)
+    } catch (error) {
+      console.error('Error updating project:', error)
+      if (window.showToast) {
+        window.showToast.error('Error al actualizar el proyecto')
+      }
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleDeleteProject = async () => {
+    if (!project?.id) return
+
+    const confirmDelete = window.confirm(
+      `¿Estás seguro que quieres eliminar el proyecto "${project.name}"?\n\nEsta acción no se puede deshacer y se perderán todas las conversaciones asociadas.`
+    )
+
+    if (!confirmDelete) return
+
+    setIsSubmitting(true)
+    try {
+      await deleteProject(project.id)
+      
+      if (window.showToast) {
+        window.showToast.success(`Proyecto "${project.name}" eliminado exitosamente`)
+      }
+      
+      onClose() // Cerrar modal después de eliminar
+    } catch (error) {
+      console.error('Error deleting project:', error)
+      if (window.showToast) {
+        window.showToast.error('Error al eliminar el proyecto')
+      }
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleCancelEdit = () => {
+    setEditData({
+      name: project?.name || '',
+      description: project?.description || ''
+    })
+    setIsEditingProject(false)
+  }
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 modal-overlay flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-xl w-96 max-h-[80vh] overflow-hidden hover-lift">
         {/* Header */}
         <div className="flex justify-between items-center p-4 border-b border-gray-200">
           <div className="flex-1">
-            <h3 className="text-lg font-semibold text-gray-900">{project?.name}</h3>
+            {!isEditingProject ? (
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">{project?.name}</h3>
+                <div className="flex items-center space-x-2 ml-4">
+                  <button
+                    onClick={() => setIsEditingProject(true)}
+                    className="text-blue-600 hover:text-blue-800 transition-colors"
+                    title="Editar proyecto"
+                  >
+                    <EditIcon className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={handleDeleteProject}
+                    disabled={isSubmitting}
+                    className="text-red-600 hover:text-red-800 transition-colors disabled:opacity-50"
+                    title="Eliminar proyecto"
+                  >
+                    <TrashIcon className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  value={editData.name}
+                  onChange={(e) => setEditData(prev => ({ ...prev, name: e.target.value }))}
+                  className="w-full text-lg font-semibold bg-gray-50 border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Nombre del proyecto"
+                />
+                <textarea
+                  value={editData.description}
+                  onChange={(e) => setEditData(prev => ({ ...prev, description: e.target.value }))}
+                  className="w-full text-sm bg-gray-50 border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  rows="2"
+                  placeholder="Descripción del proyecto"
+                />
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={handleEditProject}
+                    disabled={!editData.name.trim() || isSubmitting}
+                    className="flex items-center text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition-colors disabled:opacity-50"
+                  >
+                    <SaveIcon className="w-3 h-3 mr-1" />
+                    Guardar
+                  </button>
+                  <button
+                    onClick={handleCancelEdit}
+                    disabled={isSubmitting}
+                    className="text-sm bg-gray-200 text-gray-700 px-3 py-1 rounded hover:bg-gray-300 transition-colors disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           <button 
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 smooth-transition"
+            disabled={isSubmitting}
+            className="text-gray-400 hover:text-gray-600 smooth-transition disabled:opacity-50 ml-2"
           >
             <XIcon className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Project Info */}
+        {!isEditingProject && project?.description && (
+          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+            <p className="text-sm text-gray-600">{project.description}</p>
+          </div>
+        )}
 
         {/* Content */}
         <div className="overflow-y-auto max-h-[calc(80vh-80px)] custom-scrollbar">

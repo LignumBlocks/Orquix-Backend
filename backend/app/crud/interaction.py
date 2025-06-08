@@ -6,7 +6,7 @@ import json
 from sqlmodel import select, and_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.interaction import InteractionEvent
+from app.models.models import InteractionEvent
 from app.schemas.interaction import InteractionEventCreate
 
 
@@ -37,7 +37,7 @@ async def create_interaction(
         id=interaction_create.id,
         project_id=interaction_create.project_id,
         user_id=interaction_create.user_id,
-        user_prompt=interaction_create.user_prompt,
+        user_prompt_text=interaction_create.user_prompt,
         ai_responses_json=json.dumps(interaction_create.ai_responses),
         moderator_synthesis_json=json.dumps(interaction_create.moderator_synthesis),
         context_used=interaction_create.context_used,

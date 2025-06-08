@@ -1,19 +1,37 @@
-import { useState } from 'react'
-import { MicIcon, SendIcon, VolumeXIcon } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { MicIcon, SendIcon, VolumeXIcon, LoaderIcon, AlertCircleIcon } from 'lucide-react'
+import useAppStore from '../../store/useAppStore'
+import AIResponseCard from '../ui/AIResponseCard'
+import ContextDisplay from '../ui/ContextDisplay'
+import MetricsDisplay from '../ui/MetricsDisplay'
 
 const CenterColumn = ({ activeProject, moderatorConfig }) => {
   const [message, setMessage] = useState('')
   const [isRecording, setIsRecording] = useState(false)
+  const [error, setError] = useState(null)
 
-  // Datos de ejemplo que coinciden con la imagen
-  const currentQuestion = "What are the main emerging trends in the fintech sector for 2024?"
-  const moderatorResponse = "Based on analysis from multiple sources, I identify three key trends: 1) Embedded banking in non-financial ecosystems, 2) Conversational AI for personalized financial advisory, and 3) Real-time payment infrastructure..."
+  // Zustand store
+  const {
+    sendQuery,
+    isQuerying,
+    activeConversation,
+    lastResponse,
+    conversations
+  } = useAppStore()
 
-  const handleSendMessage = () => {
-    if (message.trim()) {
-      // Aquí iría la lógica para enviar el mensaje al backend
-      console.log('Sending message:', message)
-      setMessage('')
+  const handleSendMessage = async () => {
+    if (!message.trim() || isQuerying) return
+
+    setError(null)
+    const currentMessage = message.trim()
+    setMessage('') // Limpiar inmediatamente para mejor UX
+
+    try {
+      await sendQuery(currentMessage, true) // includeContext = true por defecto
+    } catch (error) {
+      console.error('Error sending message:', error)
+      setError(error.message || 'Error al enviar el mensaje')
+      setMessage(currentMessage) // Restaurar mensaje si hay error
     }
   }
 
@@ -26,106 +44,278 @@ const CenterColumn = ({ activeProject, moderatorConfig }) => {
 
   const toggleRecording = () => {
     setIsRecording(!isRecording)
-    // Aquí iría la lógica de speech-to-text
+    // TODO: Implementar speech-to-text
+    if (!isRecording) {
+      console.log('Iniciando grabación...')
+    } else {
+      console.log('Deteniendo grabación...')
+    }
+  }
+
+  // Usar conversación activa o la más reciente
+  const displayConversation = activeConversation || conversations[0]
+  const hasActiveProject = !!activeProject
+
+  // Calcular tokens totales de las respuestas individuales
+  const calculateTotalTokens = (responses) => {
+    if (!responses) return null
+    return responses.reduce((total, response) => {
+      const tokens = response.usage_info?.total_tokens || 0
+      return total + tokens
+    }, 0)
   }
 
   return (
     <div className="flex flex-col h-full">
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-        {/* Current Question */}
-        <div className="mb-6">
-          <div className="bg-blue-600 text-white px-6 py-4 rounded-lg shadow-sm hover-lift smooth-transition">
-            <p className="text-lg font-medium">{currentQuestion}</p>
-          </div>
-        </div>
-
-        {/* Moderator Response */}
-        <div className="mb-6">
-          <div className="flex items-start space-x-3">
-            {/* Moderator Avatar */}
-            <div className="flex-shrink-0">
-              <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center hover-lift smooth-transition">
-                <span className="text-white font-semibold text-sm">M</span>
+        
+        {/* No Project State */}
+        {!hasActiveProject && (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center">
+              <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
+                <AlertCircleIcon className="w-8 h-8 text-gray-400" />
               </div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No hay proyecto activo</h3>
+              <p className="text-gray-500">Selecciona o crea un proyecto para comenzar a hacer consultas.</p>
             </div>
-            
-            {/* Moderator Content */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center space-x-2 mb-2">
-                <span className="text-sm font-medium text-gray-900">Moderator</span>
-                <button className="text-gray-400 hover:text-gray-600 smooth-transition hover:bg-gray-100 p-1 rounded">
-                  <VolumeXIcon className="w-4 h-4" />
-                </button>
-              </div>
-              
-              <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm hover-lift smooth-transition">
-                <p className="text-gray-700 leading-relaxed">{moderatorResponse}</p>
-                
-                {/* Expand/Collapse indicator */}
-                <div className="mt-3 flex items-center justify-between">
-                  <div className="flex space-x-2 text-xs text-gray-500">
-                    <span>•••</span>
-                  </div>
-                  <button className="text-xs text-blue-600 hover:text-blue-800 smooth-transition hover:bg-blue-50 px-2 py-1 rounded">
-                    Show more
-                  </button>
+          </div>
+        )}
+
+        {/* Active Project Content */}
+        {hasActiveProject && (
+          <>
+            {/* Current Question */}
+            {displayConversation && (
+              <div className="mb-6">
+                <div className="bg-blue-600 text-white px-6 py-4 rounded-lg shadow-sm hover-lift smooth-transition">
+                  <p className="text-lg font-medium">{displayConversation.question}</p>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
+            )}
+
+            {/* Loading State */}
+            {isQuerying && (
+              <div className="mb-6">
+                <div className="flex items-start space-x-3">
+                  <div className="flex-shrink-0">
+                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
+                      <LoaderIcon className="w-4 h-4 text-white animate-spin" />
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center space-x-2 mb-2">
+                      <span className="text-sm font-medium text-gray-900">Moderator v2.0</span>
+                      <span className="text-xs text-blue-600">Procesando con {moderatorConfig.personality}...</span>
+                    </div>
+                    <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
+                      <div className="space-y-3">
+                        <div className="flex items-center space-x-2">
+                          <LoaderIcon className="w-4 h-4 text-blue-600 animate-spin" />
+                          <p className="text-gray-600">Orquestando múltiples IAs y generando síntesis inteligente...</p>
+                        </div>
+                        <div className="text-xs text-gray-500 bg-gray-50 rounded p-2">
+                          <p><strong>Proceso en curso:</strong></p>
+                          <p>• Consultando OpenAI y Anthropic en paralelo</p>
+                          <p>• Aplicando Context Manager inteligente</p>
+                          <p>• Sintetizando con meta-análisis profesional</p>
+                          <p className="mt-1 text-amber-600">⏱️ <strong>Tiempo estimado:</strong> 30-60 segundos</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Conversation Results */}
+            {displayConversation && !isQuerying && (
+              <div className="space-y-6">
+                
+                {/* Metrics Display */}
+                <MetricsDisplay 
+                  processingTime={displayConversation.processingTime}
+                  moderatorQuality={displayConversation.moderatorQuality}
+                  fallbackUsed={displayConversation.fallbackUsed}
+                  aiResponsesCount={displayConversation.individualResponses?.length}
+                  totalTokens={calculateTotalTokens(displayConversation.individualResponses)}
+                />
+
+                {/* Context Display */}
+                {displayConversation.contextInfo && (
+                  <ContextDisplay contextInfo={displayConversation.contextInfo} />
+                )}
+
+                {/* Moderator Synthesis */}
+                <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+                  <div className="px-6 py-4 border-b border-gray-200">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
+                        <span className="text-white font-semibold text-sm">M</span>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-gray-900">Síntesis del Moderador</span>
+                        <div className="flex items-center space-x-2 mt-1">
+                          <span className={`text-xs px-2 py-1 rounded-full ${
+                            displayConversation.moderatorQuality === 'high' ? 'bg-green-100 text-green-700' :
+                            displayConversation.moderatorQuality === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                            'bg-red-100 text-red-700'
+                          }`}>
+                            {displayConversation.moderatorQuality}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {displayConversation.processingTime}ms
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="p-6">
+                    <p className="text-gray-700 leading-relaxed whitespace-pre-wrap mb-4">
+                      {displayConversation.response}
+                    </p>
+                    
+                    {/* Meta-análisis */}
+                    {displayConversation.keyThemes && displayConversation.keyThemes.length > 0 && (
+                      <div className="mt-6 pt-4 border-t border-gray-100">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
+                          
+                          {/* Key Themes */}
+                          {displayConversation.keyThemes.length > 0 && (
+                            <div>
+                              <h4 className="font-medium text-gray-900 mb-2">Temas Clave:</h4>
+                              <div className="flex flex-wrap gap-2">
+                                {displayConversation.keyThemes.map((theme, i) => (
+                                  <span key={i} className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs">
+                                    {theme}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Recommendations */}
+                          {displayConversation.recommendations && displayConversation.recommendations.length > 0 && (
+                            <div>
+                              <h4 className="font-medium text-gray-900 mb-2">Recomendaciones:</h4>
+                              <ul className="text-gray-600 text-sm space-y-1">
+                                {displayConversation.recommendations.slice(0, 4).map((rec, i) => (
+                                  <li key={i} className="flex items-start">
+                                    <span className="text-blue-500 mr-2">•</span>
+                                    <span>{rec}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          
+                          {/* Suggested Questions */}
+                          {displayConversation.suggestedQuestions && displayConversation.suggestedQuestions.length > 0 && (
+                            <div className="md:col-span-2">
+                              <h4 className="font-medium text-gray-900 mb-2">Preguntas Sugeridas:</h4>
+                              <div className="flex flex-wrap gap-2">
+                                {displayConversation.suggestedQuestions.slice(0, 3).map((question, i) => (
+                                  <button 
+                                    key={i}
+                                    onClick={() => setMessage(question)}
+                                    className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer"
+                                  >
+                                    {question}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Individual AI Responses */}
+                {displayConversation.individualResponses && displayConversation.individualResponses.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-medium text-gray-900 mb-4">
+                      Respuestas Individuales de las IAs ({displayConversation.individualResponses.length})
+                    </h3>
+                    <div className="space-y-4">
+                      {displayConversation.individualResponses.map((response, index) => (
+                        <AIResponseCard 
+                          key={`${response.ia_provider_name}-${index}`}
+                          response={response} 
+                          index={index + 1} 
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Error State */}
+            {error && (
+              <div className="mb-6">
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <div className="flex items-center space-x-2">
+                    <AlertCircleIcon className="w-5 h-5 text-red-500 flex-shrink-0" />
+                    <div>
+                      <p className="text-red-700 font-medium">Error al procesar consulta</p>
+                      <p className="text-red-600 text-sm mt-1">{error}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       {/* Input Area */}
-      <div className="border-t border-gray-200 bg-white p-4">
-        <div className="flex items-end space-x-3">
-          {/* Add File Button */}
-          <button className="flex-shrink-0 p-2 text-gray-400 hover:text-gray-600 smooth-transition hover:bg-gray-100 rounded-lg">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-          </button>
-          
-          {/* Message Input */}
-          <div className="flex-1">
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Type a message..."
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent smooth-transition hover:border-gray-400"
-              rows="1"
-              style={{ minHeight: '40px', maxHeight: '120px' }}
-            />
+      {hasActiveProject && (
+        <div className="border-t border-gray-200 p-4 bg-white">
+          <div className="flex items-end space-x-3">
+            <div className="flex-1">
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Escribe tu consulta para el moderador..."
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 placeholder-gray-500"
+                rows="3"
+                disabled={isQuerying}
+              />
+            </div>
+            
+            <div className="flex flex-col space-y-2">
+              <button
+                onClick={toggleRecording}
+                className={`p-3 rounded-lg transition-colors ${
+                  isRecording 
+                    ? 'bg-red-500 text-white' 
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+                disabled={isQuerying}
+              >
+                <MicIcon className="w-5 h-5" />
+              </button>
+              
+              <button
+                onClick={handleSendMessage}
+                disabled={!message.trim() || isQuerying}
+                className="p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+              >
+                {isQuerying ? (
+                  <LoaderIcon className="w-5 h-5 animate-spin" />
+                ) : (
+                  <SendIcon className="w-5 h-5" />
+                )}
+              </button>
+            </div>
           </div>
-          
-          {/* Microphone Button */}
-          <button
-            onClick={toggleRecording}
-            className={`flex-shrink-0 p-2 rounded-lg smooth-transition ${
-              isRecording 
-                ? 'bg-red-100 text-red-600 hover:bg-red-200' 
-                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            <MicIcon className="w-5 h-5" />
-          </button>
-          
-          {/* Send Button */}
-          <button
-            onClick={handleSendMessage}
-            disabled={!message.trim()}
-            className={`flex-shrink-0 p-2 rounded-lg smooth-transition ${
-              message.trim()
-                ? 'bg-blue-600 text-white hover:bg-blue-700 hover-lift'
-                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-            }`}
-          >
-            <SendIcon className="w-5 h-5" />
-          </button>
         </div>
-      </div>
+      )}
     </div>
   )
 }

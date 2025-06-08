@@ -1,10 +1,13 @@
 from typing import List, Optional
-from sqlmodel import Session, select
+from sqlmodel import Session, select, and_
 from uuid import UUID
 from sqlalchemy import text
 import numpy as np
+from datetime import datetime
 
-from app.models.context_chunk import ContextChunk
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from app.models.models import ContextChunk
 from app.schemas.context import ChunkCreate
 from app.core.config import settings
 

@@ -28,6 +28,16 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
     
     token = credentials.credentials
     
+    # 🔐 MODO DESARROLLO: Aceptar token mock
+    if settings.ENVIRONMENT == "development" and token == "dev-mock-token-12345":
+        logger.info("🔐 Usando autenticación mock para desarrollo")
+        return SessionUser(
+            id="550e8400-e29b-41d4-a716-446655440000",  # UUID válido para desarrollo
+            name="Developer User",
+            email="dev@orquix.com",
+            image=None
+        )
+    
     try:
         # Decodificar token JWT de NextAuth.js
         payload = jwt.decode(
