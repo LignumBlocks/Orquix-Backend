@@ -26,17 +26,11 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // En desarrollo, algunos errores 401 pueden ser normales
-    if (error.response?.status === 401 && !import.meta.env.PROD) {
-      console.warn('Auth error in development - this is expected for some endpoints')
-      // No redirigir en desarrollo para permitir testing
-      return Promise.reject(error)
-    }
-    
+    // No redirigir automáticamente en ningún caso para permitir manejo manual
     if (error.response?.status === 401) {
-      // Token expirado o inválido
-      localStorage.removeItem('auth_token')
-      window.location.href = '/login'
+      console.warn('Auth error - token may be invalid or expired')
+      // En lugar de redirigir automáticamente, solo loggear el error
+      // La aplicación puede manejar esto según sea necesario
     }
     return Promise.reject(error)
   }

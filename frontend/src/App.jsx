@@ -24,14 +24,12 @@ function App() {
 
   // Inicializar la aplicación
   useEffect(() => {
-    // Configurar autenticación mock para desarrollo
+    // Siempre configurar autenticación mock para que la app funcione sin login
     const authSetup = initMockAuthIfNeeded()
     
-    if (authSetup || mockAuth.hasMockAuth()) {
-      // Configurar usuario mock en el store
-      setUser(mockAuth.getMockUser())
-      setAuthToken(mockAuth.MOCK_TOKEN)
-    }
+    // Configurar usuario mock en el store siempre
+    setUser(mockAuth.getMockUser())
+    setAuthToken(mockAuth.MOCK_TOKEN)
     
     // Inicializar store
     initialize()
