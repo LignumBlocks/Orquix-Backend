@@ -91,7 +91,6 @@ services:
   - type: web
     name: orquix-frontend
     env: static
-    region: oregon
     branch: main
     rootDir: frontend
     buildCommand: yarn install && yarn build
