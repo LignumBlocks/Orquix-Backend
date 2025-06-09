@@ -91,5 +91,5 @@ databases:
     databaseName: orquix_db
     user: orquix_user
     region: oregon
-    plan: standard
+    plan: basic
     postgresMajorVersion: 15 
