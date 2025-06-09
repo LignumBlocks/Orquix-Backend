@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { SettingsIcon, ChevronDownIcon, ChevronRightIcon, RefreshCwIcon, LoaderIcon } from 'lucide-react'
 import useAppStore from '../../store/useAppStore'
 
-const RightSidebar = () => {
+const RightSidebar = ({ isMobile = false }) => {
   const [expandedAgents, setExpandedAgents] = useState(new Set())
 
   // Zustand store
@@ -94,9 +94,11 @@ const RightSidebar = () => {
   }))
 
   return (
-    <div className="p-4 h-full custom-scrollbar">
+    <div className={`p-4 ${isMobile ? '' : 'h-full'} custom-scrollbar`}>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-gray-900">Active AIs</h2>
+        <h2 className="text-lg font-semibold text-gray-900">
+          {isMobile ? 'Estado de Agentes IA' : 'Active AIs'}
+        </h2>
         <button
           onClick={() => loadAiHealth()}
           disabled={loadingAiHealth}

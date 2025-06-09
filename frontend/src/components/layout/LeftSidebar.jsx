@@ -1,10 +1,18 @@
 import { useState, useEffect } from 'react'
-import { ChevronDownIcon, ChevronRightIcon, PlusIcon, SettingsIcon, LoaderIcon } from 'lucide-react'
+import { ChevronDownIcon, ChevronRightIcon, PlusIcon, SettingsIcon, LoaderIcon, XIcon } from 'lucide-react'
 import ProjectModal from '../ui/ProjectModal'
 import CreateProjectModal from '../ui/CreateProjectModal'
 import useAppStore from '../../store/useAppStore'
 
-const LeftSidebar = ({ activeProject, setActiveProject, moderatorConfig, setModeratorConfig }) => {
+const LeftSidebar = ({ 
+  activeProject, 
+  setActiveProject, 
+  moderatorConfig, 
+  setModeratorConfig,
+  onClose,
+  isMobile = false,
+  inlineMode = false
+}) => {
   const [projectsExpanded, setProjectsExpanded] = useState(true)
   const [moderatorExpanded, setModeratorExpanded] = useState(true)
   const [sessionsExpanded, setSessionsExpanded] = useState(true)
@@ -46,6 +54,11 @@ const LeftSidebar = ({ activeProject, setActiveProject, moderatorConfig, setMode
       setActiveProject(project)
       setStoreActiveProject(project)
     }
+    
+    // Cerrar sidebar en móvil después de seleccionar proyecto
+    if (isMobile && onClose) {
+      onClose()
+    }
   }
 
   const handleModeratorConfigChange = (key, value) => {
@@ -69,8 +82,24 @@ const LeftSidebar = ({ activeProject, setActiveProject, moderatorConfig, setMode
   }))
 
   return (
-    <div className="p-4 h-full custom-scrollbar">
-      <h2 className="text-lg font-semibold text-gray-900 mb-4">Control Panel</h2>
+    <div className={`${inlineMode ? 'p-4' : 'p-4 h-full'} custom-scrollbar`}>
+      {/* Mobile Header */}
+      {isMobile && onClose && (
+        <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900">Control Panel</h2>
+          <button
+            onClick={onClose}
+            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <XIcon className="w-5 h-5" />
+          </button>
+        </div>
+      )}
+      
+      {/* Desktop Header */}
+      {!isMobile && (
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Control Panel</h2>
+      )}
       
       {/* Projects Section */}
       <div className="mb-6">

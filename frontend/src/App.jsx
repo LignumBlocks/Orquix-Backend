@@ -3,12 +3,15 @@ import { config } from './config'
 import LeftSidebar from './components/layout/LeftSidebar'
 import CenterColumn from './components/layout/CenterColumn'
 import RightSidebar from './components/layout/RightSidebar'
+import MobileNavigation from './components/layout/MobileNavigation'
 import { ToastContainer, useToast } from './components/ui/Toast'
 import useAppStore from './store/useAppStore'
 import { initMockAuthIfNeeded, mockAuth } from './utils/mockAuth'
 
 function App() {
   const [localActiveProject, setLocalActiveProject] = useState(null)
+  const [activeTab, setActiveTab] = useState('chat') // chat, projects, agents
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const { toasts, removeToast, success, error, warning, info } = useToast()
 
   // Zustand store
@@ -57,29 +60,108 @@ function App() {
     window.showToast = { success, error, warning, info }
   }, [success, error, warning, info])
 
+  // Cerrar sidebar al cambiar de tab en móvil
+  const handleTabChange = (tab) => {
+    setActiveTab(tab)
+    setSidebarOpen(false)
+  }
+
   return (
-    <div className="h-screen bg-gray-50 flex">
-      {/* Left Sidebar - 15% */}
-      <div className="w-[15%] bg-white border-r border-gray-200 overflow-y-auto">
-        <LeftSidebar 
-          activeProject={localActiveProject}
-          setActiveProject={handleSetActiveProject}
-          moderatorConfig={storeModeratorConfig}
-          setModeratorConfig={handleSetModeratorConfig}
-        />
+    <div className="h-screen-mobile bg-gray-50 flex flex-col">
+      {/* Mobile Navigation */}
+      <MobileNavigation 
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+        activeProject={localActiveProject}
+        className="lg:hidden"
+      />
+
+      {/* Desktop Layout */}
+      <div className="hidden lg:flex flex-1">
+        {/* Left Sidebar - Desktop & Tablet */}
+        <div className="w-[280px] min-w-[280px] xl:w-[320px] xl:min-w-[320px] bg-white border-r border-gray-200 overflow-y-auto">
+          <LeftSidebar 
+            activeProject={localActiveProject}
+            setActiveProject={handleSetActiveProject}
+            moderatorConfig={storeModeratorConfig}
+            setModeratorConfig={handleSetModeratorConfig}
+          />
+        </div>
+
+        {/* Center Column - Desktop */}
+        <div className="flex-1 bg-gray-50 flex flex-col min-w-0">
+          <CenterColumn 
+            activeProject={localActiveProject}
+            moderatorConfig={storeModeratorConfig}
+          />
+        </div>
+
+        {/* Right Sidebar - Desktop */}
+        <div className="w-[320px] min-w-[320px] xl:w-[360px] xl:min-w-[360px] bg-white border-l border-gray-200 overflow-y-auto">
+          <RightSidebar />
+        </div>
       </div>
 
-      {/* Center Column - 60% */}
-      <div className="w-[60%] bg-gray-50 flex flex-col">
-        <CenterColumn 
-          activeProject={localActiveProject}
-          moderatorConfig={storeModeratorConfig}
-        />
-      </div>
+      {/* Mobile Layout */}
+      <div className="lg:hidden flex-1 flex flex-col overflow-hidden">
+        {/* Mobile Sidebar Overlay */}
+        {sidebarOpen && (
+          <div className="fixed inset-0 z-50 flex">
+            {/* Backdrop */}
+            <div 
+              className="fixed inset-0 bg-black bg-opacity-50"
+              onClick={() => setSidebarOpen(false)}
+            />
+            
+            {/* Sidebar */}
+            <div className="relative w-80 max-w-[85vw] bg-white border-r border-gray-200 overflow-y-auto">
+              <LeftSidebar 
+                activeProject={localActiveProject}
+                setActiveProject={handleSetActiveProject}
+                moderatorConfig={storeModeratorConfig}
+                setModeratorConfig={handleSetModeratorConfig}
+                onClose={() => setSidebarOpen(false)}
+                isMobile={true}
+              />
+            </div>
+          </div>
+        )}
 
-      {/* Right Sidebar - 25% */}
-      <div className="w-[25%] bg-white border-l border-gray-200 overflow-y-auto">
-        <RightSidebar />
+        {/* Mobile Content */}
+        <div className="flex-1 overflow-hidden">
+          {/* Chat Tab - Mobile */}
+          {activeTab === 'chat' && (
+            <div className="h-full bg-gray-50">
+              <CenterColumn 
+                activeProject={localActiveProject}
+                moderatorConfig={storeModeratorConfig}
+              />
+            </div>
+          )}
+
+          {/* Projects Tab - Mobile */}
+          {activeTab === 'projects' && (
+            <div className="h-full bg-white overflow-y-auto">
+              <LeftSidebar 
+                activeProject={localActiveProject}
+                setActiveProject={handleSetActiveProject}
+                moderatorConfig={storeModeratorConfig}
+                setModeratorConfig={handleSetModeratorConfig}
+                isMobile={true}
+                inlineMode={true}
+              />
+            </div>
+          )}
+
+          {/* Agents Tab - Mobile */}
+          {activeTab === 'agents' && (
+            <div className="h-full bg-white overflow-y-auto">
+              <RightSidebar isMobile={true} />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Toast Notifications */}

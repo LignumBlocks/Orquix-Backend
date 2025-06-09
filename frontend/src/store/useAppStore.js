@@ -237,18 +237,6 @@ const useAppStore = create()(
               {
                 id: 3, name: 'Agent3', status: aiProviders.openai?.status === 'healthy' ? 'online' : 'error',
                 latency: '12.0s', icon: '💎', color: 'blue', provider: 'OpenAI'
-              },
-              {
-                id: 4, name: 'Agent4', status: 'online', latency: '2.1s',
-                icon: '⚡', color: 'orange', provider: 'Groq'
-              },
-              {
-                id: 5, name: 'Agent5', status: 'online', latency: '1.5s',
-                icon: '🌲', color: 'green', provider: 'Together'
-              },
-              {
-                id: 6, name: 'Agent6', status: aiProviders.anthropic?.status === 'healthy' ? 'online' : 'error',
-                latency: '0.9s', icon: '🌲', color: 'green', provider: 'Anthropic'
               }
             ]
 

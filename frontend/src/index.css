@@ -140,3 +140,58 @@
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
+
+/* Estilos responsive específicos */
+@layer utilities {
+  /* Ocultar scrollbar horizontal en móvil */
+  @media (max-width: 768px) {
+    .hide-scrollbar-mobile {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    
+    .hide-scrollbar-mobile::-webkit-scrollbar {
+      display: none;
+    }
+  }
+  
+  /* Mejoras para toques en móvil */
+  .touch-manipulation {
+    touch-action: manipulation;
+  }
+  
+  /* Estilos específicos para móvil */
+  @media (max-width: 640px) {
+    .mobile-full-width {
+      width: 100vw;
+      margin-left: calc(-50vw + 50%);
+    }
+    
+    .mobile-padding {
+      padding-left: 1rem;
+      padding-right: 1rem;
+    }
+  }
+  
+  /* Fix para viewport height en móviles */
+  .min-h-screen-mobile {
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+  }
+  
+  .h-screen-mobile {
+    height: 100vh;
+    height: -webkit-fill-available;
+  }
+  
+  /* Prevenir zoom en inputs en iOS */
+  @supports (-webkit-touch-callout: none) {
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    textarea,
+    select {
+      font-size: 16px;
+    }
+  }
+}

@@ -68,7 +68,7 @@ const CenterColumn = ({ activeProject, moderatorConfig }) => {
   return (
     <div className="flex flex-col h-full">
       {/* Main Content Area */}
-      <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto p-4 lg:p-6 custom-scrollbar">
         
         {/* No Project State */}
         {!hasActiveProject && (
@@ -89,8 +89,8 @@ const CenterColumn = ({ activeProject, moderatorConfig }) => {
             {/* Current Question */}
             {displayConversation && (
               <div className="mb-6">
-                <div className="bg-blue-600 text-white px-6 py-4 rounded-lg shadow-sm hover-lift smooth-transition">
-                  <p className="text-lg font-medium">{displayConversation.question}</p>
+                <div className="bg-blue-600 text-white px-4 py-4 lg:px-6 rounded-lg shadow-sm hover-lift smooth-transition">
+                  <p className="text-base lg:text-lg font-medium">{displayConversation.question}</p>
                 </div>
               </div>
             )}
@@ -149,7 +149,7 @@ const CenterColumn = ({ activeProject, moderatorConfig }) => {
 
                 {/* Moderator Synthesis */}
                 <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
-                  <div className="px-6 py-4 border-b border-gray-200">
+                  <div className="px-4 py-4 lg:px-6 border-b border-gray-200">
                     <div className="flex items-center space-x-3">
                       <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
                         <span className="text-white font-semibold text-sm">M</span>
@@ -172,7 +172,7 @@ const CenterColumn = ({ activeProject, moderatorConfig }) => {
                     </div>
                   </div>
                   
-                  <div className="p-6">
+                  <div className="p-4 lg:p-6">
                     <p className="text-gray-700 leading-relaxed whitespace-pre-wrap mb-4">
                       {displayConversation.response}
                     </p>
@@ -274,8 +274,8 @@ const CenterColumn = ({ activeProject, moderatorConfig }) => {
 
       {/* Input Area */}
       {hasActiveProject && (
-        <div className="border-t border-gray-200 p-4 bg-white">
-          <div className="flex items-end space-x-3">
+        <div className="border-t border-gray-200 p-3 lg:p-4 bg-white">
+          <div className="flex items-end space-x-2 lg:space-x-3">
             <div className="flex-1">
               <textarea
                 value={message}
@@ -288,28 +288,28 @@ const CenterColumn = ({ activeProject, moderatorConfig }) => {
               />
             </div>
             
-            <div className="flex flex-col space-y-2">
+            <div className="flex lg:flex-col space-x-2 lg:space-x-0 lg:space-y-2">
               <button
                 onClick={toggleRecording}
-                className={`p-3 rounded-lg transition-colors ${
+                className={`p-2 lg:p-3 rounded-lg transition-colors ${
                   isRecording 
                     ? 'bg-red-500 text-white' 
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
                 disabled={isQuerying}
               >
-                <MicIcon className="w-5 h-5" />
+                <MicIcon className="w-4 h-4 lg:w-5 lg:h-5" />
               </button>
               
               <button
                 onClick={handleSendMessage}
                 disabled={!message.trim() || isQuerying}
-                className="p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                className="p-2 lg:p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
               >
                 {isQuerying ? (
-                  <LoaderIcon className="w-5 h-5 animate-spin" />
+                  <LoaderIcon className="w-4 h-4 lg:w-5 lg:h-5 animate-spin" />
                 ) : (
-                  <SendIcon className="w-5 h-5" />
+                  <SendIcon className="w-4 h-4 lg:w-5 lg:h-5" />
                 )}
               </button>
             </div>
