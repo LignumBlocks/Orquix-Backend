@@ -83,8 +83,10 @@ if settings.ENVIRONMENT == "development":
         "http://localhost:3001",
         "http://localhost:5173",  # Vite dev server
         "http://localhost:5174",  # Vite dev server alternativo
+        "http://localhost:5175",  # Vite dev server puerto adicional
         "http://127.0.0.1:5173",
         "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175", # Vite dev server puerto adicional
         "http://localhost:8080",
         "http://localhost:8000",
     ])

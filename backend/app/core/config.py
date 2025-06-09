@@ -8,12 +8,12 @@ class Settings(BaseSettings):
     PROJECT_VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
     
-    # Database
-    POSTGRES_SERVER: str
-    POSTGRES_USER: str
-    POSTGRES_PASSWORD: str
-    POSTGRES_DB: str
-    POSTGRES_PORT: str
+    # Database - Soporta tanto variables individuales como DATABASE_URL directo (Render)
+    POSTGRES_SERVER: Optional[str] = None
+    POSTGRES_USER: Optional[str] = None
+    POSTGRES_PASSWORD: Optional[str] = None
+    POSTGRES_DB: Optional[str] = None
+    POSTGRES_PORT: Optional[str] = None
     DATABASE_URL: Optional[str] = None
     
     # App
@@ -58,16 +58,39 @@ class Settings(BaseSettings):
     
     @property
     def sync_database_url(self) -> str:
+        """URL de database síncrona para Alembic"""
+        if not self.DATABASE_URL:
+            raise ValueError("DATABASE_URL no está configurado")
         return self.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
     
     @property
     def async_database_url(self) -> str:
+        """URL de database asíncrona para SQLModel"""
+        if not self.DATABASE_URL:
+            raise ValueError("DATABASE_URL no está configurado")
         return self.DATABASE_URL
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        if not self.DATABASE_URL:
+        
+        # Si no hay DATABASE_URL pero sí variables individuales, construirla
+        if not self.DATABASE_URL and all([
+            self.POSTGRES_SERVER, 
+            self.POSTGRES_USER, 
+            self.POSTGRES_PASSWORD, 
+            self.POSTGRES_DB, 
+            self.POSTGRES_PORT
+        ]):
             self.DATABASE_URL = f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        
+        # Si DATABASE_URL viene de Render (postgresql://), convertir a asyncpg
+        elif self.DATABASE_URL and not self.DATABASE_URL.startswith("postgresql+asyncpg://"):
+            if self.DATABASE_URL.startswith("postgresql://"):
+                self.DATABASE_URL = self.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
+        
+        # Configurar DEBUG basado en ENVIRONMENT
+        if self.ENVIRONMENT == "production":
+            self.DEBUG = False
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True)
 

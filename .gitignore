@@ -1,33 +1,265 @@
-# Backend Python
-backend/.env
-backend/__pycache__/
-backend/.pytest_cache/
-backend/venv/
-backend/*.egg-info/
-backend/.coverage
-backend/htmlcov/
+# ====================================
+# ORQUIX BACKEND - GITIGNORE COMPLETO
+# ====================================
 
-# Frontend Node.js
-frontend/.next/
-frontend/node_modules/
-frontend/.env.local
-frontend/.env.production.local
-frontend/dist/
-frontend/build/
+# Archivos de entorno
+.env
+.env.*
+!.env.example
 
-# Shared
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Poetry
+poetry.lock.backup
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# ====================================
+# FRONTEND (Next.js/React)
+# ====================================
+
+# Dependencies
 node_modules/
-.DS_Store
-.cursor/
-*.log
+/.pnp
+.pnp.js
+
+# Production builds
+.next/
+out/
+dist/
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# ESLint cache
+.eslintcache
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
 .env
 .env.local
-.env.production
+.env.development.local
+.env.test.local
+.env.production.local
 
-# IDE
-.idea/
-*.swp
-*.swo
+# Vercel
+.vercel
 
-# OS
+# ====================================
+# BASE DE DATOS
+# ====================================
+
+# Respaldos de base de datos
+*.sql
+*.db
+*.sqlite
+*.sqlite3
+database_backups/
+
+# Archivos de migración temporales
+**/migrations/versions/temp_*
+
+# ====================================
+# LOGS Y TEMPORALES
+# ====================================
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Temporary folders
+tmp/
+temp/
+.tmp/
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
 Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ====================================
+# DEPLOYMENT Y DOCKER
+# ====================================
+
+# Docker
+.dockerignore
+
+# Render
+.render/
+
+# ====================================
+# DEVELOPMENT TOOLS
+# ====================================
+
+# JetBrains IDEs
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Vim
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+Session.vim
+Sessionx.vim
+.netrwhist
+*~
+tags
+[._]*.un~
+
+# ====================================
+# ESPECÍFICOS DEL PROYECTO
+# ====================================
+
+# Archivos de configuración local
+local_config.py
+local_settings.py
+
+# Archivos de testing
+test_data/
+fixtures/
+
+# Archivos de documentación compilada
+docs/_build/
+
+# Cache de modelos de IA
+.cache/
+model_cache/
+
+# Archivos de backup
+*.bak
+*.backup
+*.orig
+
+# Archivos sensibles
+secrets/
+keys/
+credentials/
+*.pem
+*.key
+*.crt
