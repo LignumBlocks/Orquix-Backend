@@ -1,8 +1,8 @@
-# 🚀 **DEPLOYMENT GUIDE - ORQUIX BACKEND EN RENDER**
+# 🚀 **DEPLOYMENT GUIDE - ORQUIX FULLSTACK EN RENDER**
 
 ## 📋 **RESUMEN EJECUTIVO**
 
-Esta guía te ayudará a deployar **Orquix Backend** (sistema de IA con Moderador Inteligente v2.0) en **Render** usando PostgreSQL 15 con pgvector.
+Esta guía te ayudará a deployar **Orquix Fullstack** (Backend FastAPI + Frontend React) en **Render** usando PostgreSQL 15 con pgvector.
 
 ---
 
@@ -19,14 +19,48 @@ Los siguientes archivos ya están listos en tu proyecto:
 
 ```
 Orquix-Backend/
-├── render.yaml                 # ✅ Configuración completa de servicios
+├── render.yaml                     # ✅ Configuración completa de servicios (Backend + Frontend)
 ├── backend/
-│   ├── Dockerfile             # ✅ Imagen Docker optimizada
-│   ├── start.sh               # ✅ Script de inicio con migraciones
-│   ├── requirements.txt       # ✅ Dependencias Python
-│   └── app/core/config.py     # ✅ Configuración actualizada
-└── .gitignore                 # ✅ Archivos excluidos
+│   ├── Dockerfile                 # ✅ Imagen Docker optimizada
+│   ├── start.sh                   # ✅ Script de inicio con migraciones
+│   ├── requirements.txt           # ✅ Dependencias Python
+│   └── app/core/config.py         # ✅ Configuración actualizada
+├── frontend/
+│   ├── public/_redirects          # ✅ Redirects para SPA
+│   ├── vite.config.js             # ✅ Configuración optimizada de Vite
+│   └── src/config.js              # ✅ Configuración dinámica de API URLs
+└── .gitignore                     # ✅ Archivos excluidos
 ```
+
+---
+
+## 🏗️ **ARQUITECTURA DE DEPLOYMENT**
+
+### **Opción B Implementada: Frontend Static Site**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     RENDER DEPLOYMENT                       │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  🌐 Frontend (Static Site)     🔗 Backend (Web Service)   │
+│  ┌─────────────────────────┐   ┌─────────────────────────┐  │
+│  │ orquix-frontend         │   │ orquix-backend          │  │
+│  │ React + Vite            │──▶│ FastAPI + Poetry        │  │
+│  │ Tailwind CSS            │   │ PostgreSQL + pgvector   │  │
+│  │ Static Files            │   │ AI Orchestration        │  │
+│  │ _redirects for SPA      │   │ Moderator v2.0          │  │
+│  └─────────────────────────┘   └─────────────────────────┘  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### **Ventajas de la Opción B:**
+- ✅ **Más económico**: Static Site es gratuito hasta cierto límite
+- ✅ **Más rápido**: CDN global automático
+- ✅ **Más escalable**: Infinitas requests simultáneas
+- ✅ **SSL automático**: HTTPS habilitado por defecto
+- ✅ **Deploy Preview**: URLs de preview para cada PR
 
 ---
 
@@ -46,6 +80,9 @@ git commit -m "🚀 feat: Add Render deployment configuration
 - Add start.sh script with database migrations
 - Add requirements.txt generated from Poetry
 - Update config.py to support DATABASE_URL from Render
+- Add frontend static site configuration
+- Add _redirects for SPA routing
+- Update CORS for frontend domain
 - Add comprehensive .gitignore
 - Add deployment documentation"
 
@@ -64,6 +101,7 @@ git push origin main
 #### **2.2. Configurar Variables de Entorno** 🔑
 En el dashboard de Render, configura estas variables **ANTES** del deployment:
 
+**BACKEND (orquix-backend):**
 ```bash
 # === AI API KEYS (REQUERIDO) ===
 OPENAI_API_KEY=sk-tu-clave-openai-aqui
@@ -77,23 +115,31 @@ JWT_PUBLIC_KEY=tu_nextauth_public_key
 # === Las demás variables se auto-configuran ===
 ```
 
-**⚠️ IMPORTANTE**: Sin las API keys, el deployment fallará.
+**FRONTEND (orquix-frontend):**
+```bash
+# Las variables del frontend se auto-configuran desde render.yaml
+# Solo cambiar si necesitas URLs diferentes:
+VITE_API_BASE_URL=https://orquix-backend.onrender.com
+```
+
+**⚠️ IMPORTANTE**: Sin las API keys del backend, el deployment fallará.
 
 ### **PASO 3: Deployment Automático**
 
 1. **Render detectará** el archivo `render.yaml`
 2. **Creará automáticamente**:
    - 🗄️ Base de datos PostgreSQL 15
-   - 🌐 Servicio web Python
+   - 🌐 Servicio web Python (Backend)
+   - 📱 Static Site (Frontend)
    - 🔧 Variables de entorno
 3. **Ejecutará** las migraciones automáticamente
-4. **Iniciará** el servidor FastAPI
+4. **Iniciará** ambos servicios
 
 ---
 
 ## 🏥 **VERIFICACIÓN DEL DEPLOYMENT**
 
-### **1. Health Check**
+### **1. Backend Health Check**
 ```bash
 curl https://orquix-backend.onrender.com/api/v1/health
 ```
@@ -108,20 +154,26 @@ curl https://orquix-backend.onrender.com/api/v1/health
 }
 ```
 
-### **2. Documentación API**
-- 📚 **Swagger**: `https://tu-app.onrender.com/docs`
-- 📖 **ReDoc**: `https://tu-app.onrender.com/redoc`
+### **2. Frontend Verificación**
+- 🌐 **URL Principal**: `https://orquix-frontend.onrender.com`
+- 📱 **Interfaz Responsive**: Verificar las 3 columnas
+- 🔄 **Routing SPA**: Navegar entre rutas
+- 🔗 **Conexión API**: Verificar comunicación con backend
 
-### **3. Endpoints Clave**
+### **3. Documentación API**
+- 📚 **Swagger**: `https://orquix-backend.onrender.com/docs`
+- 📖 **ReDoc**: `https://orquix-backend.onrender.com/redoc`
+
+### **4. Endpoints Clave**
 ```bash
-# Información general
-GET /api/v1/health
+# Backend
+GET https://orquix-backend.onrender.com/api/v1/health
+POST https://orquix-backend.onrender.com/api/v1/projects
+POST https://orquix-backend.onrender.com/api/v1/projects/{id}/query
 
-# Crear proyecto (requiere auth)
-POST /api/v1/projects
-
-# Consulta con Moderador IA v2.0
-POST /api/v1/projects/{project_id}/query
+# Frontend
+GET https://orquix-frontend.onrender.com
+GET https://orquix-frontend.onrender.com/projects
 ```
 
 ---
@@ -129,59 +181,77 @@ POST /api/v1/projects/{project_id}/query
 ## 🛠️ **CONFIGURACIÓN AVANZADA**
 
 ### **1. Dominio Personalizado**
-En Render Dashboard:
-1. Ve a tu servicio → **"Settings"**
-2. **"Custom Domains"** → **"Add Custom Domain"**
-3. Agrega: `api.tudominio.com`
-4. Configura DNS CNAME: `api.tudominio.com → tu-app.onrender.com`
 
-### **2. Scaling**
-```yaml
-# En render.yaml (ya configurado)
-plan: starter  # Cambiar a: standard, pro, etc.
+**Para el Backend:**
+En Render Dashboard → orquix-backend:
+1. Ve a **"Settings"** → **"Custom Domains"**
+2. Agrega: `api.tudominio.com`
+3. Configura DNS CNAME: `api.tudominio.com → orquix-backend.onrender.com`
+
+**Para el Frontend:**
+En Render Dashboard → orquix-frontend:
+1. Ve a **"Settings"** → **"Custom Domains"**
+2. Agrega: `app.tudominio.com`
+3. Configura DNS CNAME: `app.tudominio.com → orquix-frontend.onrender.com`
+
+### **2. Actualizar URL del Backend**
+Si cambias el dominio del backend, actualizar:
+
+```bash
+# En render.yaml o variables de entorno
+VITE_API_BASE_URL=https://api.tudominio.com
 ```
 
-### **3. Variables de Entorno Adicionales**
-```bash
-# Optimización AI
-DEFAULT_AI_TIMEOUT=45
-DEFAULT_AI_MAX_RETRIES=5
-DEFAULT_AI_TEMPERATURE=0.8
-
-# Context Manager
-MAX_CONTEXT_TOKENS=8000
-CHUNK_SIZE=1500
+### **3. Scaling del Backend**
+```yaml
+# En render.yaml (solo backend - frontend es automático)
+plan: starter  # Cambiar a: standard, pro, etc.
 ```
 
 ---
 
 ## 🔍 **TROUBLESHOOTING**
 
-### **❌ Error: Build Failed**
+### **❌ Frontend: Build Failed**
 ```bash
 # Verificar en logs de Render:
-"Poetry not found" → El Dockerfile se encarga de instalarlo
-"Requirements not satisfied" → Verificar requirements.txt
+"yarn not found" → Render instala automáticamente
+"Build failed" → Verificar package.json y dependencies
 ```
 
-### **❌ Error: Database Connection**
+### **❌ Frontend: SPA Routing No Funciona**
+```bash
+# Verificar que existe:
+frontend/public/_redirects
+
+# Con contenido:
+/* /index.html 200
+```
+
+### **❌ Frontend: No Conecta con Backend**
+```bash
+# Verificar CORS en backend/app/main.py:
+allowed_origins = [
+    "https://orquix-frontend.onrender.com",
+    # ... otros dominios
+]
+
+# Verificar URL en frontend:
+VITE_API_BASE_URL=https://orquix-backend.onrender.com
+```
+
+### **❌ Backend: Database Connection**
 ```bash
 # Verificar que pgvector esté habilitado:
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-### **❌ Error: API Keys**
+### **❌ Backend: API Keys**
 ```bash
 # En logs verás:
 "OPENAI_API_KEY not configured"
 ```
 **Solución**: Configurar variables de entorno en Render.
-
-### **❌ Error: Migrations Failed**
-```bash
-# El script start.sh maneja automáticamente:
-alembic upgrade head
-```
 
 ---
 
@@ -189,22 +259,21 @@ alembic upgrade head
 
 ### **1. Logs en Tiempo Real**
 En Render Dashboard:
-- **"Logs"** → Ver logs del servicio
-- **"Metrics"** → CPU, memoria, requests
+- **Backend**: orquix-backend → "Logs"
+- **Frontend**: orquix-frontend → "Logs" (build logs)
 
 ### **2. Health Monitoring**
 ```bash
-# Render hace health checks automáticos cada 30s a:
-GET /api/v1/health
+# Backend health checks automáticos cada 30s:
+GET https://orquix-backend.onrender.com/api/v1/health
+
+# Frontend está siempre disponible (Static Site)
 ```
 
-### **3. Database Monitoring**
+### **3. Performance**
 ```bash
-# Verificar conexiones:
-SELECT count(*) FROM pg_stat_activity;
-
-# Verificar extensiones:
-SELECT * FROM pg_extension WHERE extname = 'vector';
+# Backend: CPU, memoria, requests en dashboard
+# Frontend: Automáticamente escalado, CDN global
 ```
 
 ---
@@ -213,6 +282,7 @@ SELECT * FROM pg_extension WHERE extname = 'vector';
 
 Si todo está correcto, verás:
 
+**Backend:**
 ```bash
 ✅ Database migrations applied successfully
 ✅ Orquix Backend v1.0.0 started
@@ -222,11 +292,20 @@ Si todo está correcto, verás:
 ✅ Health Check: /api/v1/health
 ```
 
+**Frontend:**
+```bash
+✅ Frontend build completed successfully
+✅ Static files deployed to CDN
+✅ SPA routing configured
+✅ Connected to backend API
+```
+
 ---
 
 ## 🔗 **RECURSOS ADICIONALES**
 
 - 📖 **Documentación Render**: [render.com/docs](https://render.com/docs)
+- 🎨 **Render Static Sites**: [render.com/docs/static-sites](https://render.com/docs/static-sites)
 - 🤖 **OpenAI API**: [platform.openai.com](https://platform.openai.com)
 - 🧠 **Anthropic API**: [console.anthropic.com](https://console.anthropic.com)
 - 🗄️ **PostgreSQL + pgvector**: [github.com/pgvector/pgvector](https://github.com/pgvector/pgvector)
@@ -237,11 +316,36 @@ Si todo está correcto, verás:
 
 Si encuentras problemas:
 
-1. **Revisa los logs** en Render Dashboard
-2. **Verifica variables de entorno** (especialmente API keys)
-3. **Confirma que pgvector** esté instalado en la DB
-4. **Verifica el health check**: `/api/v1/health`
+1. **Revisa los logs** en Render Dashboard (ambos servicios)
+2. **Verifica las variables de entorno** en cada servicio
+3. **Confirma CORS** en el backend para el dominio del frontend
+4. **Revisa la documentación** de Render para Static Sites
 
 ---
 
-**🚀 ¡Listo para producción con Orquix Backend + Moderador IA v2.0!** 
+## 📝 **CHECKLIST DE DEPLOYMENT**
+
+### **Pre-deployment:**
+- [ ] Repositorio GitHub actualizado
+- [ ] API Keys de OpenAI y Anthropic disponibles
+- [ ] Cuenta en Render configurada
+
+### **Backend:**
+- [ ] Variables de entorno configuradas
+- [ ] Health check respondiendo
+- [ ] CORS configurado para frontend
+- [ ] Migraciones aplicadas
+
+### **Frontend:**
+- [ ] Build exitoso
+- [ ] _redirects configurado
+- [ ] URL del backend correcta
+- [ ] Routing SPA funcionando
+
+### **Testing:**
+- [ ] Frontend carga correctamente
+- [ ] Backend responde a health check
+- [ ] Comunicación frontend-backend funciona
+- [ ] Todas las rutas del frontend accesibles
+
+¡Deployment completado! 🎉 

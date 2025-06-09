@@ -8,6 +8,7 @@
 - **Frontend**: React + Vite + Tailwind CSS
 - **IA**: Orquestación de múltiples proveedores (OpenAI, Anthropic)
 - **Moderador**: IA v2.0 con meta-análisis profesional
+- **Deployment**: Render (Backend Web Service + Frontend Static Site)
 
 ## 📁 Estructura del Proyecto
 
@@ -31,10 +32,14 @@ orquix-backend/
 │   │   ├── hooks/             # Custom hooks
 │   │   ├── services/          # API calls
 │   │   └── stores/            # Estado global (Zustand)
+│   ├── public/
+│   │   └── _redirects         # Redirects para SPA en Render
 │   └── package.json           # Dependencias Node.js
 ├── shared/                     # Tipos compartidos
 │   └── types/                 # Interfaces TypeScript
 ├── docs/                       # Documentación
+├── render.yaml                # Configuración de deployment
+├── DEPLOYMENT.md              # Guía completa de deployment
 └── package.json               # Scripts del monorepo
 ```
 
@@ -115,43 +120,148 @@ yarn preview          # Preview del build del frontend
 
 ### Frontend (http://localhost:5173)
 
-1. Iniciar el servidor de desarrollo:
+- **Dashboard**: Interface principal con layout de 3 columnas
+- **Projects**: Gestión de proyectos de investigación
+- **Chat**: Interfaz de consulta con Moderador IA v2.0
+- **AI Status**: Monitoreo en tiempo real de proveedores
+
+## 🌐 Deployment en Producción
+
+### Opción B Implementada: Static Site + Web Service
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     RENDER DEPLOYMENT                       │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  🌐 Frontend (Static Site)     🔗 Backend (Web Service)   │
+│  ┌─────────────────────────┐   ┌─────────────────────────┐  │
+│  │ orquix-frontend         │   │ orquix-backend          │  │
+│  │ React + Vite            │──▶│ FastAPI + Poetry        │  │
+│  │ Tailwind CSS            │   │ PostgreSQL + pgvector   │  │
+│  │ Static Files            │   │ AI Orchestration        │  │
+│  │ _redirects for SPA      │   │ Moderator v2.0          │  │
+│  └─────────────────────────┘   └─────────────────────────┘  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### URLs de Producción
+
+- **Frontend**: `https://orquix-frontend.onrender.com`
+- **Backend API**: `https://orquix-backend.onrender.com`
+- **API Docs**: `https://orquix-backend.onrender.com/docs`
+
+### Deployment Rápido
+
 ```bash
-poetry run uvicorn app.main:app --reload
+# 1. Configurar variables de entorno en Render Dashboard
+# 2. Push al repositorio
+git push origin main
+
+# 3. Render deployará automáticamente ambos servicios
+# Backend: Web Service con PostgreSQL
+# Frontend: Static Site con CDN global
 ```
 
-2. Visitar la documentación del API:
-```
-http://localhost:8000/docs
-```
+**Ver [DEPLOYMENT.md](./DEPLOYMENT.md) para guía completa** 📚
 
-## Estructura del Proyecto
+## ✨ Características
 
-```
-app/
-├── api/            # Endpoints del API
-├── core/           # Configuración central
-├── crud/          # Operaciones CRUD
-├── models/        # Modelos SQLModel
-├── schemas/       # Esquemas Pydantic
-└── services/      # Servicios de negocio
-```
+### Backend
+- ✅ **FastAPI**: API REST moderna y rápida
+- ✅ **Moderador IA v2.0**: Meta-análisis profesional
+- ✅ **Multi-Provider**: OpenAI + Anthropic
+- ✅ **PostgreSQL**: Con extensión pgvector
+- ✅ **Autenticación**: JWT compatible con NextAuth.js
+- ✅ **Rate Limiting**: Protección contra abuso
+- ✅ **Health Checks**: Monitoreo completo
 
-## Endpoints Principales
+### Frontend
+- ✅ **React 19**: Última versión con Vite 6.3
+- ✅ **Tailwind CSS v4**: Styling moderno
+- ✅ **Responsive**: Layout adaptativo de 3 columnas
+- ✅ **Real-time**: Estado de IAs en vivo
+- ✅ **SPA Routing**: Navegación fluida
+- ✅ **API Integration**: Comunicación optimizada
 
-- `POST /api/projects`: Crear nuevo proyecto
-- `GET /api/projects`: Listar proyectos
-- `GET /api/projects/{id}`: Obtener proyecto por ID
-- `PUT /api/projects/{id}`: Actualizar proyecto
-- `DELETE /api/projects/{id}`: Eliminar proyecto
+### Deployment
+- ✅ **Render Ready**: Configuración completa
+- ✅ **Static Site**: Frontend con CDN global
+- ✅ **Auto-scaling**: Backend escalable
+- ✅ **SSL/HTTPS**: Certificados automáticos
+- ✅ **Preview URLs**: Deploy preview para PRs
 
-## Tests
+## 🧪 Testing
 
-Ejecutar los tests:
+### Desarrollo Local
 ```bash
-poetry run pytest
+# Verificar estado de ambos servicios
+./dev-status.sh
+
+# Tests del backend
+yarn test:backend
+
+# Tests del frontend  
+yarn test:frontend
 ```
 
-## Licencia
+### Producción
+```bash
+# Health check del backend
+curl https://orquix-backend.onrender.com/api/v1/health
 
-MIT
+# Verificar frontend
+curl https://orquix-frontend.onrender.com
+```
+
+## 🎯 Estado del Proyecto
+
+### ✅ Completado
+- Arquitectura completa del sistema
+- Moderador IA v2.0 con meta-análisis
+- Interface de usuario responsive
+- Orquestación de múltiples IAs
+- Deployment en Render listo
+- Documentación completa
+
+### 🔄 En Desarrollo
+- Autenticación con Google OAuth
+- Sistema de usuarios avanzado
+- Métricas y analytics
+- Tests de integración
+
+### 📋 Roadmap
+- Integración con más proveedores de IA
+- Sistema de plugins
+- API pública
+- Aplicación móvil
+
+## 📚 Documentación
+
+- [**DEPLOYMENT.md**](./DEPLOYMENT.md) - Guía completa de deployment
+- [**docs/**](./docs/) - Documentación técnica completa
+- [**frontend/README.md**](./frontend/README.md) - Documentación del frontend
+- **API Docs**: Disponible en `/docs` del backend
+
+## 🤝 Contribuir
+
+1. Fork el repositorio
+2. Crear feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit cambios (`git commit -m 'Add some AmazingFeature'`)
+4. Push al branch (`git push origin feature/AmazingFeature`)
+5. Abrir Pull Request
+
+## 📄 Licencia
+
+Este proyecto está bajo la Licencia MIT - ver [LICENSE](LICENSE) para detalles.
+
+## 🙋‍♂️ Soporte
+
+- **Issues**: [GitHub Issues](https://github.com/tu-usuario/orquix-backend/issues)
+- **Documentación**: [docs/](./docs/)
+- **Email**: tu-email@ejemplo.com
+
+---
+
+**🚀 ¡Orquix está listo para producción!** Deployment completo en Render con Backend + Frontend optimizado.

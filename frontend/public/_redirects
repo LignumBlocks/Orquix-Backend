@@ -1,0 +1,14 @@
+# =======================================
+# RENDER STATIC SITE - SPA REDIRECTS
+# =======================================
+
+# Para React Router - Todas las rutas deben apuntar a index.html
+# Esto es necesario para Single Page Applications (SPA)
+
+/* /index.html 200
+
+# Redirigir requests de API al backend (opcional, mejor usar CORS)
+# /api/* https://orquix-backend.onrender.com/api/:splat 200
+
+# Manejar errores 404 con la página principal
+/404 /index.html 200 

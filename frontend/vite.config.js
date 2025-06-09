@@ -8,10 +8,36 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  
+  // Configuración para build de producción
+  build: {
+    outDir: 'dist',
+    sourcemap: false, // Desactivar sourcemaps en producción
+    minify: 'esbuild',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          router: ['react-router-dom'],
+          ui: ['lucide-react'],
+          utils: ['axios']
+        }
+      }
+    },
+    chunkSizeWarningLimit: 1000
+  },
+  
+  // Configuración de optimización
+  optimizeDeps: {
+    include: ['react', 'react-dom', 'react-router-dom', 'axios', 'lucide-react']
+  },
+  
+  // Configuración del servidor de desarrollo
   server: {
     port: 5173,
+    host: true, // Permite conexiones externas en desarrollo
     proxy: {
-      // Proxy para todas las requests de la API
+      // Proxy para todas las requests de la API en desarrollo
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
@@ -33,5 +59,11 @@ export default defineConfig({
         },
       }
     }
+  },
+  
+  // Configuración para preview
+  preview: {
+    port: 4173,
+    host: true
   }
 })

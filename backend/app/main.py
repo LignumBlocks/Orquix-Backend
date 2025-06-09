@@ -75,6 +75,7 @@ allowed_origins = [
     "http://127.0.0.1:3000",
     "https://orquix.com",     # Dominio de producción (ajustar según necesidad)
     "https://app.orquix.com", # Subdominio de la app
+    "https://orquix-frontend.onrender.com", # Frontend en Render Static Site
 ]
 
 # En desarrollo, permitir más dominios

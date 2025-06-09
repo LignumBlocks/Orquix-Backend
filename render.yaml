@@ -85,6 +85,37 @@ services:
       - key: JWT_PUBLIC_KEY
         value: your_nextauth_public_key_here
 
+  # =======================================
+  # FRONTEND - STATIC SITE (OPCIÓN B)
+  # =======================================
+  - type: web
+    name: orquix-frontend
+    env: static
+    region: oregon
+    branch: main
+    rootDir: frontend
+    buildCommand: yarn install && yarn build
+    staticPublishPath: ./dist
+    pullRequestPreviewsEnabled: true
+    envVars:
+      # Frontend Configuration
+      - key: VITE_API_BASE_URL
+        value: https://orquix-backend.onrender.com
+      - key: VITE_APP_NAME
+        value: Orquix
+      - key: VITE_APP_VERSION
+        value: 1.0.0
+      - key: VITE_ENVIRONMENT
+        value: production
+      - key: VITE_API_TIMEOUT
+        value: 60000
+      - key: VITE_RETRY_ATTEMPTS
+        value: 3
+      - key: VITE_ENABLE_MOCK_AUTH
+        value: false
+      - key: VITE_ENABLE_DEBUGGING
+        value: false
+
 # Base de datos PostgreSQL con pgvector
 databases:
   - name: orquix-db
