@@ -4,7 +4,7 @@ services:
     name: orquix-backend
     env: python
     region: oregon
-    plan: standard
+    plan: starter
     branch: main
     rootDir: backend
     buildCommand: pip install poetry==2.1.3 && poetry config virtualenvs.create false && poetry install --only=main
@@ -91,5 +91,5 @@ databases:
     databaseName: orquix_db
     user: orquix_user
     region: oregon
-    plan: starter
+    plan: standard
     postgresMajorVersion: 15 
