@@ -4,6 +4,7 @@ import logging
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from sqlmodel import Session, create_engine
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.schemas.query import (
     QueryRequest, QueryResponse, ContextInfo, QueryType, ContextConfig
@@ -196,18 +197,53 @@ class QueryService:
     ) -> tuple[Optional[ContextInfo], str]:
         """Busca contexto relevante para la consulta"""
         try:
+            # Para la funcionalidad de historial necesitamos una sesión async
+            # Vamos a crear una temporal si no la tenemos
+            from sqlmodel.ext.asyncio.session import AsyncSession
+            from sqlalchemy.ext.asyncio import create_async_engine
+            
             if not session:
-                # Crear sesión temporal para búsqueda
-                database_url = settings.DATABASE_URL.replace("postgresql+asyncpg", "postgresql")
-                engine = create_engine(database_url, echo=False)
-                session = Session(engine)
+                # Crear sesión async temporal para búsqueda
+                async_engine = create_async_engine(settings.DATABASE_URL, echo=False)
+                async_session = AsyncSession(async_engine)
+            else:
+                # Convertir la sesión sync a async si es necesario
+                if isinstance(session, AsyncSession):
+                    async_session = session
+                else:
+                    # Para compatibilidad, creamos una sesión async temporal
+                    async_engine = create_async_engine(settings.DATABASE_URL, echo=False)
+                    async_session = AsyncSession(async_engine)
             
             # Inicializar context manager si no existe
             if not self.context_manager:
-                self.context_manager = ContextManager(session)
+                self.context_manager = ContextManager(async_session)
             
-            # Buscar chunks relevantes
-            query_embedding = await self.context_manager.generate_embedding(query_request.user_question)
+            # 🧠 NUEVA FUNCIONALIDAD: Enriquecer query con historial conversacional
+            enriched_query = query_request.user_question
+            
+            # Solo enriquecer si tenemos project_id y user_id
+            if query_request.project_id and query_request.user_id:
+                enriched_query = await self.context_manager.enrich_query_with_history(
+                    query=query_request.user_question,
+                    project_id=query_request.project_id,
+                    user_id=query_request.user_id,
+                    enable_history=True,  # Configurable en el futuro
+                    max_history_tokens=600
+                )
+                
+                # Log si se enriqueció
+                if enriched_query != query_request.user_question:
+                    logger.info("✨ Query enriquecida con historial conversacional")
+            
+            # Buscar chunks relevantes usando la query enriquecida
+            query_embedding = await self.context_manager.generate_embedding(enriched_query)
+            
+            # Para la búsqueda vectorial necesitamos usar una sesión sync
+            # Crear sesión sync para la búsqueda vectorial
+            database_url = settings.DATABASE_URL.replace("postgresql+asyncpg", "postgresql")
+            sync_engine = create_engine(database_url, echo=False)
+            sync_session = Session(sync_engine)
             
             # Importar la función de búsqueda
             from app.crud.context import find_similar_chunks_sync
@@ -220,13 +256,16 @@ class QueryService:
                 cosine_threshold = 1 - config.similarity_threshold
             
             chunks = find_similar_chunks_sync(
-                db=session,
+                db=sync_session,
                 query_embedding=query_embedding,
                 project_id=query_request.project_id,
                 user_id=query_request.user_id,
                 top_k=config.top_k,
                 similarity_threshold=cosine_threshold
             )
+            
+            # Cerrar la sesión sync temporal
+            sync_session.close()
             
             if not chunks:
                 logger.info("No se encontró contexto relevante")

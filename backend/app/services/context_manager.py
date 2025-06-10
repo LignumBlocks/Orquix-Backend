@@ -8,8 +8,9 @@ import tiktoken
 
 from openai import AsyncOpenAI
 from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select
 
-from app.models.models import ContextChunk
+from app.models.models import ContextChunk, InteractionEvent, ModeratedSynthesis
 from app.schemas.context import ChunkCreate, ChunkWithSimilarity, ContextBlock
 from app.crud.context import create_context_chunk, find_similar_chunks
 from app.core.config import settings
@@ -333,3 +334,225 @@ class ContextManager:
         except Exception as e:
             logger.error(f"Error al generar bloque de contexto: {str(e)}")
             raise 
+
+    async def get_recent_conversation_history(
+        self,
+        project_id: UUID,
+        user_id: UUID,
+        limit: int = 3,
+        max_tokens_per_item: int = 200
+    ) -> List[Dict[str, str]]:
+        """
+        Recupera el historial conversacional reciente del usuario en un proyecto.
+        
+        Args:
+            project_id: ID del proyecto
+            user_id: ID del usuario
+            limit: Número máximo de interacciones a recuperar
+            max_tokens_per_item: Tokens máximos por elemento del historial
+            
+        Returns:
+            Lista de diccionarios con user_prompt y moderator_response
+        """
+        try:
+            # Query para obtener interacciones recientes con síntesis moderada
+            query = (
+                select(InteractionEvent, ModeratedSynthesis.synthesis_text)
+                .outerjoin(ModeratedSynthesis, InteractionEvent.moderated_synthesis_id == ModeratedSynthesis.id)
+                .where(
+                    InteractionEvent.project_id == project_id,
+                    InteractionEvent.user_id == user_id,
+                    InteractionEvent.deleted_at.is_(None)
+                )
+                .order_by(InteractionEvent.created_at.desc())
+                .limit(limit)
+            )
+            
+            result = await self.db.execute(query)
+            rows = result.all()
+            
+            history = []
+            for interaction_event, synthesis_text in rows:
+                # Truncar el prompt del usuario si es muy largo
+                user_prompt = interaction_event.user_prompt_text
+                if self._count_tokens(user_prompt) > max_tokens_per_item:
+                    user_prompt = self._truncate_text_to_token_limit(user_prompt, max_tokens_per_item)
+                
+                # Obtener respuesta del moderador
+                moderator_response = ""
+                if synthesis_text:
+                    moderator_response = synthesis_text
+                    if self._count_tokens(moderator_response) > max_tokens_per_item:
+                        moderator_response = self._truncate_text_to_token_limit(moderator_response, max_tokens_per_item)
+                
+                history.append({
+                    "user_prompt": user_prompt,
+                    "moderator_response": moderator_response,
+                    "timestamp": interaction_event.created_at.isoformat()
+                })
+            
+            # Invertir el orden para tener el más antiguo primero
+            return list(reversed(history))
+            
+        except Exception as e:
+            logger.error(f"Error al recuperar historial conversacional: {str(e)}")
+            return []
+
+    def format_conversation_history(
+        self,
+        history: List[Dict[str, str]],
+        max_total_tokens: int = 800
+    ) -> str:
+        """
+        Formatea el historial conversacional en un texto coherente.
+        
+        Args:
+            history: Lista de interacciones del historial
+            max_total_tokens: Tokens máximos para todo el historial formateado
+            
+        Returns:
+            Texto formateado del historial
+        """
+        if not history:
+            return ""
+        
+        formatted_parts = []
+        current_tokens = 0
+        
+        # Agregar header
+        header = "Historial de conversación reciente:"
+        formatted_parts.append(header)
+        current_tokens += self._count_tokens(header)
+        
+        # Procesar cada interacción
+        for i, interaction in enumerate(history):
+            user_part = f"\nUsuario: {interaction['user_prompt']}"
+            moderator_part = f"\nModerador: {interaction['moderator_response']}" if interaction['moderator_response'] else ""
+            
+            interaction_text = user_part + moderator_part
+            interaction_tokens = self._count_tokens(interaction_text)
+            
+            # Verificar si podemos agregar esta interacción
+            if current_tokens + interaction_tokens <= max_total_tokens:
+                formatted_parts.append(interaction_text)
+                current_tokens += interaction_tokens
+            else:
+                # Si no cabe, truncar esta interacción para que quepa
+                remaining_tokens = max_total_tokens - current_tokens - 50  # Buffer de seguridad
+                if remaining_tokens > 100:  # Solo si queda espacio razonable
+                    truncated_interaction = self._truncate_text_to_token_limit(
+                        interaction_text, 
+                        remaining_tokens
+                    )
+                    formatted_parts.append(truncated_interaction)
+                break
+        
+        # Agregar separador final
+        formatted_parts.append("\n---\n")
+        
+        return "".join(formatted_parts)
+
+    async def enrich_query_with_history(
+        self,
+        query: str,
+        project_id: UUID,
+        user_id: UUID,
+        enable_history: bool = True,
+        max_history_tokens: int = 600
+    ) -> str:
+        """
+        Enriquece una consulta con historial conversacional si es necesario.
+        
+        Args:
+            query: Consulta original del usuario
+            project_id: ID del proyecto
+            user_id: ID del usuario
+            enable_history: Si incluir historial (configurable)
+            max_history_tokens: Tokens máximos para el historial
+            
+        Returns:
+            Query enriquecida con historial o query original
+        """
+        if not enable_history:
+            return query
+        
+        # Verificar si la query parece necesitar contexto histórico
+        if not self._query_needs_history(query):
+            return query
+        
+        try:
+            # Obtener historial reciente
+            history = await self.get_recent_conversation_history(
+                project_id=project_id,
+                user_id=user_id,
+                limit=3
+            )
+            
+            if not history:
+                return query
+            
+            # Formatear historial
+            formatted_history = self.format_conversation_history(
+                history=history,
+                max_total_tokens=max_history_tokens
+            )
+            
+            # Construir query enriquecida
+            enriched_query = f"{formatted_history}Nueva pregunta: {query}"
+            
+            logger.info(f"Query enriquecida con historial de {len(history)} interacciones")
+            return enriched_query
+            
+        except Exception as e:
+            logger.error(f"Error al enriquecer query con historial: {str(e)}")
+            return query  # Fallback a query original
+
+    def _query_needs_history(self, query: str) -> bool:
+        """
+        Determina si una consulta probablemente necesita historial conversacional.
+        Busca patrones de referencias implícitas.
+        """
+        query_lower = query.lower().strip()
+        
+        # Patrones que indican referencias implícitas
+        implicit_patterns = [
+            # Referencias directoriales 
+            "últimos", "primeros", "anteriores", "previos",
+            
+            # Pronombres y referencias 
+            "eso", "esto", "esos", "estas", "aquello", "lo que",
+            "el que", "la que", "los que", "las que",
+            
+            # Referencias temporales implícitas
+            "antes", "después", "luego", "ahora", "ya",
+            
+            # Acciones sobre contenido previo
+            "mejora", "cambia", "modifica", "ajusta", "corrige",
+            "amplía", "resume", "explica", "detalla",
+            
+            # Referencias numéricas sin contexto
+            "los 4", "las 5", "los 3", "dame 2",
+            
+            # Comparaciones implícitas
+            "mejor", "peor", "similar", "parecido", "como",
+            
+            # Referencias a resultados previos
+            "resultado", "respuesta", "lo anterior", "arriba"
+        ]
+        
+        # Verificar si contiene algún patrón
+        for pattern in implicit_patterns:
+            if pattern in query_lower:
+                return True
+        
+        # Verificar queries muy cortas (probable referencia implícita)
+        # Pero excluir preguntas completas con palabras interrogativas
+        words = query.split()
+        if len(words) <= 3:
+            # Excluir preguntas que empiecen con palabras interrogativas completas
+            interrogative_words = ["qué", "que", "cómo", "como", "cuándo", "cuando", "dónde", "donde", "por", "para", "quién", "quien"]
+            first_word = words[0].lower().strip("¿?")
+            if first_word not in interrogative_words:
+                return True
+            
+        return False 
