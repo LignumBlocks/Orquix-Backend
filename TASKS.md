@@ -22,6 +22,7 @@ Plataforma completa de orquestación de múltiples IAs con interfaz responsive y
 - [x] **Layout adaptativo (móvil/tablet/desktop)**
 - [x] **Deployment frontend en Render (Static Site)**
 - [x] **Corrección de problemas de layout móvil**
+- [x] **PreAnalyst completamente implementado e integrado**
 
 ## In Progress Tasks
 
@@ -33,6 +34,19 @@ Plataforma completa de orquestación de múltiples IAs con interfaz responsive y
 
 ### High Priority
 - [ ] **Tarea 1.4: Historial Conversacional Corto** - Incorporación de memoria conversacional para referencias implícitas
+- [x] **Tarea 1.5: PreAnalystService - Interpretación previa de consultas** - Análisis e interpretación de la intención del usuario antes de orquestar IAs
+  - [x] Implementar clase `PreAnalysisResult` con campos requeridos
+  - [x] Crear servicio `PreAnalystService` en `app/services/pre_analyst.py`
+  - [x] Integrar GPT-3.5-Turbo para análisis de intenciones
+  - [x] Desarrollar endpoint `/analyze-prompt` para testing
+  - [x] Integrar PreAnalyst con flujo principal de orquestación
+  - [x] Implementar flujo iterativo de clarificación de preguntas
+  - [x] **Integrar interfaz frontend con flujo de clarificación**
+    - [x] Crear servicio clarificationService.js
+    - [x] Desarrollar componente ClarificationDialog.jsx
+    - [x] Integrar estado de clarificación en useAppStore.js
+    - [x] Modificar CenterColumn.jsx para mostrar flujo de clarificación
+    - [x] Añadir indicadores visuales para PreAnalyst
 - [ ] Implementación de speech-to-text en móvil
 - [ ] Optimización de Context Manager con historial reciente
 
@@ -79,6 +93,66 @@ La aplicación utiliza un diseño **mobile-first** con breakpoints específicos:
 - **Frontend**: `https://orquix-frontend.onrender.com`
 
 ## Próxima Funcionalidad Prioritaria
+
+### 🧠 Tarea 1.5: PreAnalystService - Interpretación previa de consultas
+
+**Problema**: Los usuarios envían preguntas vagas, incompletas o ambiguas (ej: "necesito ayuda con el presupuesto de mi viaje"). Estas consultas requieren clarificación antes de ser enviadas a las IAs orquestadas, generando respuestas genéricas o irrelevantes.
+
+**Solución**: Implementar un servicio previo que analice la intención del usuario, identifique información faltante y genere preguntas de clarificación iterativas.
+
+#### Flujo de Conversación Ejemplo
+
+1. **Usuario**: "necesito ayuda con el presupuesto de mi viaje"
+2. **PreAnalyst**: Interpreta intención + genera preguntas clarificadoras
+3. **Usuario**: Responde "Es para Medellín, 4 días, tengo $800 dólares"  
+4. **PreAnalyst**: Genera `refined_prompt_candidate` refinado
+5. **Sistema**: Envía prompt refinado al flujo normal de orquestación
+
+#### Implementación Técnica
+
+1. **Modelo de Datos**:
+   ```python
+   class PreAnalysisResult(BaseModel):
+       interpreted_intent: str
+       clarification_questions: List[str]
+       refined_prompt_candidate: Optional[str]
+   ```
+
+2. **Servicio Principal**:
+   ```python
+   # app/services/pre_analyst.py
+   async def analyze_prompt(user_prompt_text: str) -> PreAnalysisResult
+   ```
+
+3. **Integración con OpenAI**:
+   - Modelo: `gpt-3.5-turbo-1106` (económico)
+   - Temperature: 0.3 (consistencia)
+   - Sistema prompt específico para análisis de intenciones
+
+4. **Endpoint de Testing**:
+   ```python
+   # app/routers/pre_analyst.py
+   @router.post("/analyze-prompt")
+   async def analyze_user_prompt(...)
+   ```
+
+#### Archivos a Crear/Modificar
+
+- `backend/app/services/pre_analyst.py` - ✅ Servicio principal
+- `backend/app/api/v1/endpoints/pre_analyst.py` - ✅ Endpoint REST
+- `backend/app/models/pre_analysis.py` - ✅ Modelos Pydantic
+- `backend/app/main.py` - ✅ Integración del router
+- `backend/app/api/v1/endpoints/projects.py` - ✅ Integración con flujo principal
+- `backend/app/services/clarification_manager.py` - ✅ **Gestión de sesiones iterativas**
+- `backend/app/api/v1/endpoints/pre_analyst.py` - ✅ **Endpoints de clarificación**
+
+#### Beneficios
+
+- ✅ Mejora calidad de respuestas mediante clarificación previa
+- ✅ Reduce tokens consumidos en orquestación principal
+- ✅ Habilita manejo de referencias implícitas futuras
+- ✅ Compatible con arquitectura actual
+- ✅ Costo-efectivo (modelo económico GPT-3.5)
 
 ### 🧠 Tarea 1.4: Historial Conversacional Corto
 
@@ -132,6 +206,9 @@ La aplicación utiliza un diseño **mobile-first** con breakpoints específicos:
 - `backend/app/routers/ai_orchestrator.py` - Endpoints de orquestación  
 - `backend/app/routers/projects.py` - Gestión de proyectos
 - `backend/app/routers/moderator.py` - Moderador v2.0
+- `backend/app/services/pre_analyst.py` - ✅ **PreAnalystService**
+- `backend/app/api/v1/endpoints/pre_analyst.py` - ✅ **Endpoints PreAnalyst**
+- `backend/app/models/pre_analysis.py` - ✅ **Modelos PreAnalysis**
 - `backend/app/database/database.py` - Configuración PostgreSQL
 - `backend/app/database/models.py` - Modelos SQLAlchemy
 

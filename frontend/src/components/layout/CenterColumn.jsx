@@ -4,6 +4,7 @@ import useAppStore from '../../store/useAppStore'
 import AIResponseCard from '../ui/AIResponseCard'
 import ContextDisplay from '../ui/ContextDisplay'
 import MetricsDisplay from '../ui/MetricsDisplay'
+import ClarificationDialog from '../ui/ClarificationDialog'
 
 const CenterColumn = ({ activeProject, moderatorConfig }) => {
   const [message, setMessage] = useState('')
@@ -16,11 +17,18 @@ const CenterColumn = ({ activeProject, moderatorConfig }) => {
     isQuerying,
     activeConversation,
     lastResponse,
-    conversations
+    conversations,
+    // Estados de clarificación
+    clarificationSession,
+    isClarificationActive,
+    clarificationLoading,
+    continueClarification,
+    completeClarification,
+    cancelClarification
   } = useAppStore()
 
   const handleSendMessage = async () => {
-    if (!message.trim() || isQuerying) return
+    if (!message.trim() || isQuerying || clarificationLoading) return
 
     setError(null)
     const currentMessage = message.trim()
@@ -33,6 +41,29 @@ const CenterColumn = ({ activeProject, moderatorConfig }) => {
       setError(error.message || 'Error al enviar el mensaje')
       setMessage(currentMessage) // Restaurar mensaje si hay error
     }
+  }
+
+  // Manejadores de clarificación
+  const handleContinueClarification = async (userResponse) => {
+    try {
+      await continueClarification(userResponse)
+    } catch (error) {
+      console.error('Error continuing clarification:', error)
+      setError(error.message || 'Error en la clarificación')
+    }
+  }
+
+  const handleCompleteClarification = async (refinedPrompt) => {
+    try {
+      await completeClarification(refinedPrompt)
+    } catch (error) {
+      console.error('Error completing clarification:', error)
+      setError(error.message || 'Error al completar la clarificación')
+    }
+  }
+
+  const handleCancelClarification = () => {
+    cancelClarification()
   }
 
   const handleKeyPress = (e) => {
@@ -95,7 +126,41 @@ const CenterColumn = ({ activeProject, moderatorConfig }) => {
               </div>
             )}
 
-            {/* Loading State */}
+            {/* PreAnalyst Loading State */}
+            {clarificationLoading && (
+              <div className="mb-6">
+                <div className="flex items-start space-x-3">
+                  <div className="flex-shrink-0">
+                    <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center">
+                      <LoaderIcon className="w-4 h-4 text-white animate-spin" />
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center space-x-2 mb-2">
+                      <span className="text-sm font-medium text-gray-900">PreAnalyst</span>
+                      <span className="text-xs text-purple-600">Analizando tu consulta...</span>
+                    </div>
+                    <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
+                      <div className="space-y-3">
+                        <div className="flex items-center space-x-2">
+                          <LoaderIcon className="w-4 h-4 text-purple-600 animate-spin" />
+                          <p className="text-gray-600">Generando preguntas de clarificación inteligentes...</p>
+                        </div>
+                        <div className="text-xs text-gray-500 bg-purple-50 rounded p-2">
+                          <p><strong>PreAnalyst en acción:</strong></p>
+                          <p>• Interpretando la intención de tu consulta</p>
+                          <p>• Identificando información faltante</p>
+                          <p>• Generando preguntas de clarificación específicas</p>
+                          <p className="mt-1 text-purple-600">🧠 <strong>Tiempo estimado:</strong> 5-10 segundos</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Main Orchestration Loading State */}
             {isQuerying && (
               <div className="mb-6">
                 <div className="flex items-start space-x-3">
@@ -281,10 +346,18 @@ const CenterColumn = ({ activeProject, moderatorConfig }) => {
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder="Escribe tu consulta para el moderador..."
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 placeholder-gray-500"
+                placeholder={
+                  clarificationLoading 
+                    ? "PreAnalyst está analizando tu consulta..." 
+                    : "Escribe tu consulta para el moderador..."
+                }
+                className={`w-full px-4 py-3 border rounded-lg resize-none focus:ring-2 focus:border-transparent text-gray-900 placeholder-gray-500 ${
+                  clarificationLoading 
+                    ? 'border-purple-300 focus:ring-purple-500' 
+                    : 'border-gray-300 focus:ring-blue-500'
+                }`}
                 rows="3"
-                disabled={isQuerying}
+                disabled={isQuerying || clarificationLoading}
               />
             </div>
             
@@ -296,17 +369,22 @@ const CenterColumn = ({ activeProject, moderatorConfig }) => {
                     ? 'bg-red-500 text-white' 
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
-                disabled={isQuerying}
+                disabled={isQuerying || clarificationLoading}
               >
                 <MicIcon className="w-4 h-4 lg:w-5 lg:h-5" />
               </button>
               
               <button
                 onClick={handleSendMessage}
-                disabled={!message.trim() || isQuerying}
-                className="p-2 lg:p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                disabled={!message.trim() || isQuerying || clarificationLoading}
+                className={`p-2 lg:p-3 rounded-lg transition-colors ${
+                  clarificationLoading 
+                    ? 'bg-purple-600 text-white hover:bg-purple-700'
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                } disabled:bg-gray-300 disabled:cursor-not-allowed`}
+                title={clarificationLoading ? 'PreAnalyst analizando...' : 'Enviar consulta'}
               >
-                {isQuerying ? (
+                {isQuerying || clarificationLoading ? (
                   <LoaderIcon className="w-4 h-4 lg:w-5 lg:h-5 animate-spin" />
                 ) : (
                   <SendIcon className="w-4 h-4 lg:w-5 lg:h-5" />
@@ -315,6 +393,17 @@ const CenterColumn = ({ activeProject, moderatorConfig }) => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Diálogo de Clarificación */}
+      {isClarificationActive && (
+        <ClarificationDialog
+          clarificationSession={clarificationSession}
+          onContinue={handleContinueClarification}
+          onComplete={handleCompleteClarification}
+          onCancel={handleCancelClarification}
+          isLoading={clarificationLoading}
+        />
       )}
     </div>
   )

@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Importar endpoints
-from app.api.v1.endpoints import projects, auth, feedback, health, interactions
+from app.api.v1.endpoints import projects, auth, feedback, health, interactions, pre_analyst
 from app.api.v1.context import router as context_router
 
 # Configuración y middleware
@@ -191,6 +191,17 @@ app.include_router(
     tags=["📄 Contexto"],
     responses={
         401: {"description": "No autenticado"},
+    }
+)
+
+# Endpoints de PreAnalyst (análisis previo de consultas)
+app.include_router(
+    pre_analyst.router, 
+    prefix=f"{settings.API_V1_STR}/pre-analyst", 
+    tags=["🧠 PreAnalyst"],
+    responses={
+        400: {"description": "Datos inválidos"},
+        500: {"description": "Error interno del servidor"},
     }
 )
 

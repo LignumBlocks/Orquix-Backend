@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { devtools, persist } from 'zustand/middleware'
 import { projectService, healthService, historyService } from '../services/api'
+import { clarificationService } from '../services/clarificationService'
 
 const useAppStore = create()(
   devtools(
@@ -21,6 +22,11 @@ const useAppStore = create()(
         activeConversation: null,
         isQuerying: false,
         lastResponse: null,
+
+        // 🧠 Estado de clarificación PreAnalyst
+        clarificationSession: null,
+        isClarificationActive: false,
+        clarificationLoading: false,
 
         // 🤖 Estado de IAs
         aiAgents: [],
@@ -124,12 +130,107 @@ const useAppStore = create()(
           set({ conversations: [conversation, ...conversations] })
         },
 
+        // 🧠 Acciones de clarificación PreAnalyst
+        startClarification: async (message) => {
+          console.log('startClarification', message)
+          const { activeProject } = get()
+          if (!activeProject) {
+            throw new Error('No hay proyecto activo')
+          }
+
+          set({ clarificationLoading: true, isClarificationActive: true })
+          
+          try {
+            const response = await clarificationService.startClarificationSession(
+              activeProject.id, 
+              message
+            )
+            
+            set({ 
+              clarificationSession: response,
+              clarificationLoading: false
+            })
+
+            return response
+          } catch (error) {
+            set({ clarificationLoading: false, isClarificationActive: false })
+            console.error('Error starting clarification:', error)
+            throw error
+          }
+        },
+
+        continueClarification: async (userResponse) => {
+          console.log('continueClarification', userResponse)
+          const { activeProject, clarificationSession } = get()
+          if (!activeProject || !clarificationSession) {
+            throw new Error('No hay sesión de clarificación activa')
+          }
+
+          set({ clarificationLoading: true })
+          
+          try {
+            const response = await clarificationService.continueClarificationSession(
+              clarificationSession.session_id,
+              activeProject.id,
+              userResponse
+            )
+            
+            set({ 
+              clarificationSession: response,
+              clarificationLoading: false
+            })
+
+            return response
+          } catch (error) {
+            set({ clarificationLoading: false })
+            console.error('Error continuing clarification:', error)
+            throw error
+          }
+        },
+
+        completeClarification: (refinedPrompt) => {
+          console.log('completeClarification', refinedPrompt)
+          set({ 
+            isClarificationActive: false,
+            clarificationSession: null,
+            clarificationLoading: false
+          })
+          
+                     // Enviar la consulta refinada automáticamente (saltando pre-análisis)
+           return get().sendQuery(refinedPrompt, true, true)
+        },
+
+        cancelClarification: () => {
+          console.log('cancelClarification')
+          set({ 
+            isClarificationActive: false,
+            clarificationSession: null,
+            clarificationLoading: false
+          })
+        },
+
         // 🌟 ACCIÓN PRINCIPAL - QUERY/CHAT
-        sendQuery: async (message, includeContext = true) => {
-          console.log('sendQuery', message, includeContext)
+        sendQuery: async (message, includeContext = true, skipPreAnalysis = false) => {
+          console.log('sendQuery', message, includeContext, skipPreAnalysis)
           const { activeProject, moderatorConfig } = get()
           if (!activeProject) {
             throw new Error('No hay proyecto activo')
+          }
+
+          // Detectar si necesita pre-análisis (prompts cortos o con palabras clave)
+          const needsPreAnalysis = !skipPreAnalysis && (
+            message.length < 50 || 
+            /\b(ayuda|necesito|quiero|como|que|puedo)\b/i.test(message)
+          )
+
+          if (needsPreAnalysis) {
+            // Intentar iniciar clarificación primero
+            try {
+              return await get().startClarification(message)
+            } catch (error) {
+              console.warn('PreAnalyst no disponible, continuando con query normal:', error)
+              // Si el PreAnalyst falla, continuar con el flujo normal
+            }
           }
 
           set({ isQuerying: true, lastResponse: null })
