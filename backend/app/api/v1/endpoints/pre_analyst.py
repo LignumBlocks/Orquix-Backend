@@ -94,11 +94,20 @@ async def start_or_continue_clarification(
                 initial_prompt=request.user_response
             )
         else:
-            # Continuar sesión existente
-            response = await clarification_manager.continue_clarification_session(
-                session_id=request.session_id,
-                user_response=request.user_response
-            )
+            # Verificar si se debe forzar el avance
+            if request.force_proceed:
+                response = clarification_manager.force_proceed_session(request.session_id)
+                if not response:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Sesión de clarificación no encontrada"
+                    )
+            else:
+                # Continuar sesión normalmente
+                response = await clarification_manager.continue_clarification_session(
+                    session_id=request.session_id,
+                    user_response=request.user_response
+                )
         
         return response
         

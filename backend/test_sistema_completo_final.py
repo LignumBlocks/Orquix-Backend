@@ -12,6 +12,7 @@ Características demostradas:
 - Acumulación progresiva de contexto
 - Sugerencias inteligentes
 - Finalización y preparación para IAs principales
+- Prompts reales del AI Moderator
 """
 
 import asyncio
@@ -85,7 +86,7 @@ class SistemaContextoCompleto:
             self.log_and_print("\n✅ PRUEBA COMPLETADA EXITOSAMENTE", style="bold green")
             
             # 5. Guardar output en archivo
-            await self.guardar_output_archivo()
+            return await self.guardar_output_archivo()
             
         except Exception as e:
             self.log_and_print(f"\n❌ ERROR EN LA PRUEBA: {e}", style="bold red")
@@ -343,7 +344,7 @@ class SistemaContextoCompleto:
 2. El AI Orchestrator construye requests específicos para cada IA
 3. Cada IA recibe su prompt optimizado según su modelo
 4. Las respuestas se procesan por el AI Moderator
-5. El AI Moderator genera una síntesis unificada
+5. El AI Moderator genera una síntesis unificada usando prompts v2.0
         """.strip()
         
         panel_flujo = Panel(
@@ -372,7 +373,7 @@ PREGUNTA FINAL:
         # Simular cómo se construirían los prompts específicos
         self.log_and_print("\n🤖 PROMPTS ESPECÍFICOS POR IA:", style="bold magenta")
         
-        # Prompt para OpenAI (simulado)
+        # Prompt para OpenAI (simulado basado en OpenAIAdapter)
         openai_prompt = f"""Eres un asistente experto que proporciona respuestas precisas y útiles.
 
 CONTEXTO:
@@ -390,7 +391,93 @@ Proporciona una respuesta detallada y específica."""
         )
         console.print(panel_openai)
         
-        # Prompt para Anthropic (simulado)
+        # Prompt para Anthropic (simulado basado en AnthropicAdapter)
         anthropic_prompt = f"""Human: {resultado_finalizacion['accumulated_context']}
 
-{resultado_finalizacion['final_question']} 
+{resultado_finalizacion['final_question']}
+
+Por favor, proporciona una respuesta detallada y específica basándote en el contexto proporcionado."""
+        
+        panel_anthropic = Panel(
+            anthropic_prompt,
+            title="🔵 PROMPT PARA ANTHROPIC (CLAUDE)",
+            border_style="blue"
+        )
+        console.print(panel_anthropic)
+        
+        # Mostrar el prompt del AI Moderator v2.0 (el más importante)
+        self.log_and_print("\n🧠 PROMPT DEL AI MODERATOR v2.0:", style="bold red")
+        
+        moderator_prompt = f"""**System Role:**
+Eres un asistente de meta-análisis objetivo, analítico y altamente meticuloso. Tu tarea principal es procesar un conjunto de respuestas de múltiples modelos de IA diversos (`external_ai_responses`) a una consulta específica del investigador (`user_question`). Tu objetivo es generar un reporte estructurado, claro y altamente accionable (objetivo total de salida: aproximadamente 800-1000 tokens) que ayude al investigador a:
+    a) Comprender las perspectivas diversas y contribuciones clave de cada IA.
+    b) Identificar puntos cruciales de consenso y contradicciones factuales obvias.
+    c) Reconocer cobertura temática, énfasis y omisiones notables.
+    d) Definir pasos lógicos y accionables para su investigación o consulta.
+
+**INPUT DATA:**
+
+**user_question:** {resultado_finalizacion['final_question']}
+
+**external_ai_responses:**
+[AI_Modelo_OPENAI] dice: [Respuesta de OpenAI aquí]
+
+[AI_Modelo_ANTHROPIC] dice: [Respuesta de Anthropic aquí]
+
+Por favor, genera el meta-análisis siguiendo exactamente la estructura especificada en el prompt v2.0."""
+        
+        panel_moderator = Panel(
+            moderator_prompt,
+            title="🧠 PROMPT DEL AI MODERATOR v2.0 (META-ANÁLISIS)",
+            border_style="red"
+        )
+        console.print(panel_moderator)
+        
+        # Mostrar estadísticas finales
+        tabla_stats = Table(title="📈 ESTADÍSTICAS DEL SISTEMA")
+        tabla_stats.add_column("Métrica", style="cyan")
+        tabla_stats.add_column("Valor", style="white")
+        
+        tabla_stats.add_row("Contexto acumulado (chars)", str(len(resultado_finalizacion['accumulated_context'])))
+        tabla_stats.add_row("Pregunta final (chars)", str(len(resultado_finalizacion['final_question'])))
+        tabla_stats.add_row("Prompt OpenAI (chars)", str(len(openai_prompt)))
+        tabla_stats.add_row("Prompt Anthropic (chars)", str(len(anthropic_prompt)))
+        tabla_stats.add_row("Prompt Moderator (chars)", str(len(moderator_prompt)))
+        
+        console.print(tabla_stats)
+    
+    async def guardar_output_archivo(self):
+        """Guarda toda la salida en un archivo."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archivo_output = f"test_output_completo_final_{timestamp}.txt"
+        
+        # Obtener todo el output de la consola
+        output_completo = console.export_text()
+        
+        # Escribir al archivo
+        with open(archivo_output, 'w', encoding='utf-8') as f:
+            f.write("🧪 DEMOSTRACIÓN COMPLETA DEL SISTEMA DE CONSTRUCCIÓN DE CONTEXTO\n")
+            f.write("=" * 80 + "\n")
+            f.write(f"Fecha y hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("=" * 80 + "\n\n")
+            f.write(output_completo)
+            f.write(f"\n\n" + "=" * 80)
+            f.write(f"\nArchivo generado: {archivo_output}")
+            f.write(f"\nFecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            f.write("\n" + "=" * 80)
+        
+        self.log_and_print(f"\n📄 Salida completa guardada en: {archivo_output}", style="bold blue")
+        
+        return archivo_output
+
+
+async def main():
+    """Función principal."""
+    sistema = SistemaContextoCompleto()
+    archivo_generado = await sistema.ejecutar_demostracion_completa()
+    print(f"\n🎉 ¡Demostración completada! Archivo generado: {archivo_generado}")
+
+
+if __name__ == "__main__":
+    # Ejecutar la demostración completa
+    asyncio.run(main()) 

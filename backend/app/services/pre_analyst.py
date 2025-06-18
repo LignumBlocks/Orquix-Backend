@@ -9,15 +9,43 @@ SYSTEM_PROMPT = """Eres un asistente experto que ayuda a interpretar preguntas d
 
 1. Analizar la intención principal del usuario.
 2. Identificar si hay datos faltantes o ambigüedades en la pregunta.
-3. Proponer una pregunta mejorada solo si la información es suficiente.
+3. SIEMPRE proponer una versión mejorada de la pregunta, incluso si falta información.
+
+Reglas importantes:
+1. Para preguntas vagas o muy generales, SIEMPRE genera 2-4 preguntas de clarificación.
+2. refined_prompt_candidate NUNCA debe ser null o vacío.
+3. Si la pregunta es específica y clara, deja clarification_questions vacío.
+4. Si hay ambigüedad, genera preguntas que ayuden a entender:
+   - Contexto específico que le interesa al usuario
+   - Aspectos particulares que quiere explorar
+   - Perspectiva o enfoque deseado
+   - Nivel de detalle requerido
 
 Responde siempre en JSON válido con los siguientes campos:
 - interpreted_intent: string (explica brevemente lo que el usuario quiere)
-- clarification_questions: lista de strings (preguntas que ayudarían a mejorar la comprensión)
-- refined_prompt_candidate: string o null (versión mejorada de la pregunta si está todo claro)
+- clarification_questions: lista de strings (preguntas que ayudarían a mejorar la comprensión, máximo 4)
+- refined_prompt_candidate: string (SIEMPRE presente - versión mejorada de la pregunta usando la información disponible)
 
-Si hay información suficiente para generar una respuesta útil, deja clarification_questions vacío y proporciona refined_prompt_candidate.
-Si faltan datos importantes, genera 2-4 preguntas específicas y deja refined_prompt_candidate como null."""
+Ejemplos:
+
+1. Input vago: "¿qué opinas sobre la automatización?"
+   {
+     "interpreted_intent": "El usuario quiere conocer perspectivas sobre el impacto de la automatización",
+     "clarification_questions": [
+       "¿Te interesa algún sector específico (industria, servicios, etc.)?",
+       "¿Quieres enfocarte en impactos económicos, sociales o tecnológicos?",
+       "¿Buscas información sobre tendencias actuales o proyecciones futuras?",
+       "¿Te preocupa algún aspecto particular (empleo, productividad, etc.)?"
+     ],
+     "refined_prompt_candidate": "Analiza los principales impactos y tendencias de la automatización, considerando sus beneficios y desafíos en diferentes sectores"
+   }
+
+2. Input específico: "Explica el impacto de la automatización en call centers de Latinoamérica"
+   {
+     "interpreted_intent": "El usuario quiere entender cómo la automatización afecta específicamente a los call centers en Latinoamérica",
+     "clarification_questions": [],
+     "refined_prompt_candidate": "Analiza el impacto actual y proyectado de la automatización en los call centers latinoamericanos, incluyendo efectos en empleo, productividad y calidad de servicio"
+   }"""
 
 class PreAnalystService:
     """Servicio para análisis previo de prompts del usuario."""
@@ -59,10 +87,15 @@ class PreAnalystService:
             parsed_result = json.loads(content)
             
             # Validar y crear resultado
+            refined_candidate = parsed_result.get("refined_prompt_candidate", "").strip()
+            if not refined_candidate:
+                # Fallback: usar el prompt original si no hay refined_candidate
+                refined_candidate = user_prompt_text
+            
             return PreAnalysisResult(
                 interpreted_intent=parsed_result.get("interpreted_intent", ""),
                 clarification_questions=parsed_result.get("clarification_questions", []),
-                refined_prompt_candidate=parsed_result.get("refined_prompt_candidate")
+                refined_prompt_candidate=refined_candidate
             )
             
         except json.JSONDecodeError as e:

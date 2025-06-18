@@ -82,7 +82,7 @@ async def get_interaction_history(
             
             summary = InteractionSummary(
                 id=interaction.id,
-                user_prompt=interaction.user_prompt[:200] + "..." if len(interaction.user_prompt) > 200 else interaction.user_prompt,
+                user_prompt=interaction.user_prompt_text[:200] + "..." if len(interaction.user_prompt_text) > 200 else interaction.user_prompt_text,
                 synthesis_preview=synthesis_preview,
                 moderator_quality=synthesis_data.get("quality", "unknown") if interaction.moderator_synthesis_json else "unknown",
                 created_at=interaction.created_at,
@@ -162,7 +162,7 @@ async def get_interaction_detail(
         interaction_event = InteractionEvent(
             id=interaction.id,
             project_id=interaction.project_id,
-            user_prompt=interaction.user_prompt,
+            user_prompt=interaction.user_prompt_text,
             ai_responses=ai_responses,  # Como dict por ahora
             moderator_synthesis=moderator_synthesis,
             created_at=interaction.created_at,

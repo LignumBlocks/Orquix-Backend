@@ -9,11 +9,11 @@ class PreAnalysisResult(BaseModel):
     Campos:
     - interpreted_intent: Paráfrasis de lo que entiende el sistema
     - clarification_questions: Lista de preguntas para aclarar ambigüedades
-    - refined_prompt_candidate: Versión refinada del prompt (solo si está completo)
+    - refined_prompt_candidate: Versión refinada del prompt (SIEMPRE presente)
     """
     interpreted_intent: str
     clarification_questions: List[str]
-    refined_prompt_candidate: Optional[str] = None
+    refined_prompt_candidate: str  # Ahora SIEMPRE presente, no Optional
 
 class PreAnalysisRequest(BaseModel):
     """Request para el análisis de un prompt del usuario."""
@@ -41,6 +41,7 @@ class ClarificationSession(BaseModel):
     current_analysis: Optional[PreAnalysisResult] = None
     is_complete: bool = False
     final_refined_prompt: Optional[str] = None
+    force_proceed: bool = False  # Nuevo campo para opt-in
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -49,12 +50,14 @@ class ClarificationRequest(BaseModel):
     session_id: Optional[UUID] = None  # None para nueva sesión
     project_id: UUID
     user_response: str
+    force_proceed: bool = False  # Nuevo campo para saltar clarificaciones
     
     class Config:
         json_schema_extra = {
             "example": {
                 "project_id": "550e8400-e29b-41d4-a716-446655440000",
-                "user_response": "Es para Medellín, 4 días, tengo $800 dólares"
+                "user_response": "Es para Medellín, 4 días, tengo $800 dólares",
+                "force_proceed": False
             }
         }
 
@@ -66,6 +69,7 @@ class ClarificationResponse(BaseModel):
     is_complete: bool
     final_refined_prompt: Optional[str] = None
     next_questions: List[str] = []
+    can_force_proceed: bool = True  # Nuevo campo para indicar si se puede forzar
     
     class Config:
         json_schema_extra = {
@@ -74,9 +78,10 @@ class ClarificationResponse(BaseModel):
                 "analysis_result": {
                     "interpreted_intent": "El usuario quiere planificar un viaje a Medellín",
                     "clarification_questions": ["¿Qué actividades te interesan más?"],
-                    "refined_prompt_candidate": None
+                    "refined_prompt_candidate": "Planifica un viaje de 4 días a Medellín con presupuesto de $800 dólares"
                 },
                 "is_complete": False,
-                "next_questions": ["¿Qué actividades te interesan más?"]
+                "next_questions": ["¿Qué actividades te interesan más?"],
+                "can_force_proceed": True
             }
         } 

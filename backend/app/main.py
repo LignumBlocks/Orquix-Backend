@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Importar endpoints
-from app.api.v1.endpoints import projects, auth, feedback, health, interactions, pre_analyst
+from app.api.v1.endpoints import projects, auth, feedback, health, interactions, pre_analyst, context_chat
 from app.api.v1.context import router as context_router
 
 # Configuración y middleware
@@ -202,6 +202,16 @@ app.include_router(
     responses={
         400: {"description": "Datos inválidos"},
         500: {"description": "Error interno del servidor"},
+    }
+)
+
+# Endpoints de contexto (nuevo)
+app.include_router(
+    context_chat.router, 
+    prefix=f"{settings.API_V1_STR}/context-chat", 
+    tags=["📄 Contexto Chat"],
+    responses={
+        401: {"description": "No autenticado"},
     }
 )
 

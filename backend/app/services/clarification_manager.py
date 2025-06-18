@@ -178,6 +178,45 @@ class ClarificationManager:
         """Obtiene una sesión por su ID."""
         return self._active_sessions.get(session_id)
     
+    def force_proceed_session(self, session_id: UUID) -> Optional[ClarificationResponse]:
+        """
+        Fuerza el avance de una sesión saltando las preguntas de clarificación.
+        
+        Args:
+            session_id: ID de la sesión
+            
+        Returns:
+            ClarificationResponse con la sesión completada forzadamente
+        """
+        session = self._active_sessions.get(session_id)
+        if not session:
+            return None
+        
+        now = datetime.utcnow().isoformat()
+        
+        # Marcar sesión como completa y forzada
+        session.is_complete = True
+        session.force_proceed = True
+        session.updated_at = now
+        
+        # Agregar turno del asistente indicando que se procede sin clarificación
+        assistant_turn = ConversationTurn(
+            role="assistant",
+            content="Entendido. Procederé con la consulta usando la información disponible.",
+            timestamp=now
+        )
+        session.conversation_history.append(assistant_turn)
+        
+        return ClarificationResponse(
+            session_id=session_id,
+            analysis_result=session.current_analysis,
+            conversation_history=session.conversation_history,
+            is_complete=True,
+            final_refined_prompt=session.final_refined_prompt,
+            next_questions=[],
+            can_force_proceed=False  # Ya no se puede forzar más
+        )
+    
     def complete_session(self, session_id: UUID) -> Optional[str]:
         """
         Marca una sesión como completa y retorna el prompt refinado final.

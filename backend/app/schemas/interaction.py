@@ -14,6 +14,7 @@ class QueryRequest(BaseModel):
     include_context: bool = Field(default=True, description="Si incluir contexto del proyecto")
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0, description="Temperatura para generación")
     max_tokens: Optional[int] = Field(default=None, ge=100, le=4000, description="Máximo número de tokens")
+    conversation_mode: Optional[str] = Field(default="auto", description="Modo de conversación: 'auto', 'continue', 'new'")
 
 
 class InteractionEventCreate(BaseModel):

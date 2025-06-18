@@ -26,6 +26,7 @@ Plataforma completa de orquestación de múltiples IAs con interfaz responsive y
 
 ## In Progress Tasks
 
+- [ ] Testing de integración completa del FollowUpInterpreter
 - [ ] Optimización de rendimiento en móviles
 - [ ] Testing en diferentes navegadores y dispositivos
 - [ ] Documentación de usuario final
@@ -33,6 +34,33 @@ Plataforma completa de orquestación de múltiples IAs con interfaz responsive y
 ## Future Tasks
 
 ### High Priority
+- [ ] **Tarea 1.3: Continuidad Conversacional Post-Síntesis** - Sistema de follow-up conversacional para mantener el hilo de la investigación
+  - [x] **Análisis de Tipo de Consulta**
+    - [x] Crear servicio `FollowUpInterpreter` para detectar si una consulta es nueva o continuación
+    - [x] Implementar detección de referencias anafóricas ("Y si vamos con niños", "mejora eso", "dame más detalles")
+    - [x] Integrar análisis con PreAnalyst para determinar contexto necesario
+    - [x] Desarrollar criterios para identificar cambio de tema vs. ampliación
+  - [x] **Recuperación de Memoria Activa**
+    - [x] Implementar función `get_recent_interaction_context()` en `context_manager.py`
+    - [x] Configurar recuperación automática de última síntesis del moderador
+    - [x] Extraer prompts refinados y respuestas de IAs relevantes de la interacción previa
+    - [x] Implementar límites de tokens/caracteres para contexto histórico
+  - [x] **Enriquecimiento Contextual Inteligente**
+    - [x] Desarrollar función `enrich_prompt_with_history()` para combinar nueva consulta con historial
+    - [x] Implementar template de prompt que preserva información previa relevante
+    - [x] Evitar repetición de información ya proporcionada en síntesis anterior
+    - [x] Mantener coherencia semántica entre consultas relacionadas
+  - [x] **Integración con Flujo Principal**
+    - [x] Modificar endpoint `/projects/{project_id}/query` para incluir análisis de continuidad
+    - [x] Actualizar `AI Orchestrator` para usar contexto enriquecido automáticamente
+    - [x] Asegurar que el `AI Moderator` considere el hilo conversacional en nuevas síntesis
+    - [x] Implementar logging específico para tracking de continuidad conversacional
+  - [ ] **Frontend - Indicadores de Continuidad**
+    - [x] Crear componente visual para mostrar cuando se usa contexto previo
+    - [x] Implementar "breadcrumb" conversacional en la interfaz de chat
+    - [x] Agregar opción para usuario de "empezar nueva consulta" vs "continuar conversación"
+    - [x] Mostrar preview del contexto que se está utilizando de conversaciones anteriores
+    - [x] **Dashboard conversacional detallado con métricas y estado en tiempo real**
 - [ ] **Tarea 1.4: Historial Conversacional Corto** - Incorporación de memoria conversacional para referencias implícitas
 - [x] **Tarea 1.5: PreAnalystService - Interpretación previa de consultas** - Análisis e interpretación de la intención del usuario antes de orquestar IAs
   - [x] Implementar clase `PreAnalysisResult` con campos requeridos
@@ -199,6 +227,115 @@ La aplicación utiliza un diseño **mobile-first** con breakpoints específicos:
 - ✅ Escalable (configurable por cantidad de eventos o tokens)
 - ✅ No requiere cambios de esquema de BD
 
+### 🔄 Tarea 1.3: Continuidad Conversacional Post-Síntesis
+
+**Problema**: Orquix actualmente funciona como un sistema de "pregunta-respuesta única", pero debe comportarse como un asistente inteligente que acompaña al usuario durante una investigación iterativa. Los usuarios esperan poder hacer seguimiento como "¿Y si vamos con niños?" después de una consulta sobre viajes.
+
+**Solución**: Implementar un sistema de continuidad conversacional que detecte automáticamente cuando una nueva consulta es una ampliación de la anterior y use la síntesis previa como memoria activa.
+
+#### Flujo de Conversación Ejemplo
+
+1. **Usuario inicial**: "Necesito ayuda para planear un viaje de 5 días a Cuba con mi esposa"
+2. **Sistema**: [PreAnalyst + Orquestación + Síntesis] → "Aquí están las mejores opciones para un viaje de 5 días en Cuba..."
+3. **Usuario follow-up**: "¿Y si fuéramos con niños?"
+4. **Sistema**: [Detecta continuidad + Enriquece contexto] → Nuevo prompt: "Considerando el viaje a Cuba de 5 días que ya planificamos, cómo adaptarlo para ir con niños"
+5. **Sistema**: [Orquestación enriquecida + Síntesis contextual]
+
+#### Implementación Técnica
+
+1. **Servicio FollowUpInterpreter**:
+   ```python
+   class FollowUpInterpreter:
+       async def analyze_query_continuity(
+           user_prompt: str, 
+           project_id: UUID, 
+           user_id: UUID
+       ) -> ContinuityAnalysis
+   ```
+
+2. **Modelo de Datos**:
+   ```python
+   class ContinuityAnalysis(BaseModel):
+       is_continuation: bool
+       reference_type: str  # "anaphoric", "topic_expansion", "clarification", "new_topic"
+       confidence_score: float
+       previous_interaction_id: Optional[UUID]
+       contextual_keywords: List[str]
+   ```
+
+3. **Recuperación de Memoria Activa**:
+   ```python
+   async def get_recent_interaction_context(
+       project_id: UUID, 
+       user_id: UUID, 
+       max_interactions: int = 1
+   ) -> InteractionContext
+   ```
+
+4. **Enriquecimiento Contextual**:
+   ```python
+   def enrich_prompt_with_history(
+       current_prompt: str,
+       previous_synthesis: str,
+       previous_refined_prompt: str
+   ) -> str:
+       return f"""
+       CONTEXTO PREVIO (para referencia):
+       Consulta anterior: {previous_refined_prompt}
+       Síntesis proporcionada: {previous_synthesis[:500]}...
+       
+       NUEVA CONSULTA (amplía o modifica lo anterior):
+       {current_prompt}
+       
+       INSTRUCCIÓN: Responde considerando el contexto previo pero enfócate en la nueva consulta.
+       """
+   ```
+
+#### Archivos a Crear/Modificar
+
+**Backend - Nuevos Servicios**:
+- `backend/app/services/followup_interpreter.py` - Detecta tipo de continuidad
+- `backend/app/models/continuity.py` - Modelos de datos para continuidad
+- `backend/app/services/conversation_memory.py` - Gestión de memoria conversacional
+
+**Backend - Modificaciones**:
+- `backend/app/services/context_manager.py` - Agregar funciones de recuperación de historial
+- `backend/app/api/v1/endpoints/projects.py` - Integrar análisis de continuidad en `/query`
+- `backend/app/services/ai_orchestrator.py` - Usar contexto enriquecido
+- `backend/app/services/ai_moderator.py` - Síntesis consciente del hilo conversacional
+
+**Frontend - Nuevos Componentes**:
+- `frontend/src/components/chat/ContinuityIndicator.jsx` - Muestra cuando se usa contexto previo
+- `frontend/src/components/chat/ConversationBreadcrumb.jsx` - Rastro visual de la conversación
+- `frontend/src/components/chat/ContextPreview.jsx` - Preview del contexto utilizado
+
+**Frontend - Modificaciones**:
+- `frontend/src/store/useAppStore.js` - Estado para tracking de continuidad
+- `frontend/src/components/layout/CenterColumn.jsx` - Integrar indicadores visuales
+- `frontend/src/services/api.js` - Endpoints para gestión de continuidad
+
+#### Criterios de Detección de Continuidad
+
+**Referencias Anafóricas** (is_continuation = true):
+- Pronombres: "eso", "esto", "lo anterior", "lo que dijiste"
+- Temporal: "después de eso", "luego", "también"
+- Condicional: "¿y si...?", "pero qué tal si..."
+- Expansión: "además", "también considera", "otra opción"
+
+**Cambio de Tema** (is_continuation = false):
+- Palabras clave completamente diferentes
+- Cambio radical de dominio (ej: viajes → programación)
+- Indicadores explícitos: "ahora quiero", "nueva consulta", "cambiando de tema"
+
+#### Beneficios Esperados
+
+- ✅ Experiencia conversacional natural e intuitiva
+- ✅ Reduce fricción para el usuario en consultas iterativas
+- ✅ Maximiza reutilización del conocimiento ya generado
+- ✅ Convierte Orquix en un verdadero asistente de investigación
+- ✅ Compatible con la arquitectura actual de `interaction_events`
+- ✅ Escalable y configurable (límites de memoria, tokens, etc.)
+
 ## Relevant Files
 
 ### Backend Core ✅
@@ -209,6 +346,10 @@ La aplicación utiliza un diseño **mobile-first** con breakpoints específicos:
 - `backend/app/services/pre_analyst.py` - ✅ **PreAnalystService**
 - `backend/app/api/v1/endpoints/pre_analyst.py` - ✅ **Endpoints PreAnalyst**
 - `backend/app/models/pre_analysis.py` - ✅ **Modelos PreAnalysis**
+- `backend/app/services/followup_interpreter.py` - ✅ **Detección de continuidad conversacional**
+- `backend/app/services/context_manager.py` - ✅ **Función get_recent_interaction_context() añadida**
+- `backend/app/api/v1/endpoints/projects.py` - ✅ **Integrado con análisis de continuidad**
+- `backend/tests/test_followup_interpreter.py` - ✅ **Pruebas completas del FollowUpInterpreter**
 - `backend/app/database/database.py` - Configuración PostgreSQL
 - `backend/app/database/models.py` - Modelos SQLAlchemy
 
@@ -218,6 +359,9 @@ La aplicación utiliza un diseño **mobile-first** con breakpoints específicos:
 - `frontend/src/components/layout/LeftSidebar.jsx` - Sidebar proyectos (responsive)
 - `frontend/src/components/layout/CenterColumn.jsx` - Chat principal (responsive)
 - `frontend/src/components/layout/RightSidebar.jsx` - Agentes IA (responsive)
+- `frontend/src/components/chat/ContinuityIndicator.jsx` - ⏳ **Indicador de contexto previo**
+- `frontend/src/components/chat/ConversationBreadcrumb.jsx` - ⏳ **Rastro conversacional**
+- `frontend/src/components/chat/ContextPreview.jsx` - ⏳ **Preview de contexto utilizado**
 - `frontend/src/index.css` - Estilos responsive y móviles
 
 ### Configuration ✅

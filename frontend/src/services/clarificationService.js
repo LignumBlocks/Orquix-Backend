@@ -1,4 +1,26 @@
-import api from './api'
+import config from '../config'
+
+const handleResponse = async (response) => {
+  if (!response.ok) {
+    throw new Error(response.statusText || 'Not Found')
+  }
+  const data = await response.json()
+  return data
+}
+
+// Función para obtener headers con autenticación
+const getAuthHeaders = () => {
+  const token = localStorage.getItem('auth_token')
+  const headers = {
+    'Content-Type': 'application/json'
+  }
+  
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  
+  return headers
+}
 
 /**
  * Servicio para manejar sesiones de clarificación iterativa con el PreAnalyst
@@ -12,11 +34,15 @@ export const clarificationService = {
    */
   async startClarificationSession(projectId, userResponse) {
     try {
-      const response = await api.post('/api/v1/pre-analyst/clarification', {
-        project_id: projectId,
-        user_response: userResponse
+      const response = await fetch(`${config.apiUrl}/pre-analyst/clarification`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          project_id: projectId,
+          user_response: userResponse
+        })
       })
-      return response.data
+      return handleResponse(response)
     } catch (error) {
       console.error('Error starting clarification session:', error)
       throw error
@@ -32,12 +58,16 @@ export const clarificationService = {
    */
   async continueClarificationSession(sessionId, projectId, userResponse) {
     try {
-      const response = await api.post('/api/v1/pre-analyst/clarification', {
-        session_id: sessionId,
-        project_id: projectId,
-        user_response: userResponse
+      const response = await fetch(`${config.apiUrl}/pre-analyst/clarification`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          session_id: sessionId,
+          project_id: projectId,
+          user_response: userResponse
+        })
       })
-      return response.data
+      return handleResponse(response)
     } catch (error) {
       console.error('Error continuing clarification session:', error)
       throw error
@@ -51,8 +81,10 @@ export const clarificationService = {
    */
   async getClarificationSession(sessionId) {
     try {
-      const response = await api.get(`/api/v1/pre-analyst/clarification/${sessionId}`)
-      return response.data
+      const response = await fetch(`${config.apiUrl}/pre-analyst/clarification/${sessionId}`, {
+        headers: getAuthHeaders()
+      })
+      return handleResponse(response)
     } catch (error) {
       console.error('Error getting clarification session:', error)
       throw error
@@ -66,14 +98,42 @@ export const clarificationService = {
    */
   async analyzePrompt(userPromptText) {
     try {
-      const response = await api.post('/api/v1/pre-analyst/analyze-prompt', {
-        user_prompt_text: userPromptText
+      const response = await fetch(`${config.apiUrl}/pre-analyst/analyze-prompt`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          user_prompt_text: userPromptText
+        })
       })
-      return response.data
+      return handleResponse(response)
     } catch (error) {
       console.error('Error analyzing prompt:', error)
       throw error
     }
+  },
+
+  submitClarification: async (projectId, originalQuery, clarificationResponse) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/projects/${projectId}/clarify`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        original_query: originalQuery,
+        clarification_response: clarificationResponse
+      })
+    })
+    return handleResponse(response)
+  },
+
+  getClarificationQuestions: async (projectId, query) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/pre-analyst/analyze-prompt`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        project_id: projectId,
+        prompt: query
+      })
+    })
+    return handleResponse(response)
   }
 }
 

@@ -7,6 +7,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.security import HTTPBearer
 from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select
 
 from app.core.database import get_db
 from app.crud import project as project_crud
@@ -23,6 +24,7 @@ from app.services.ai_orchestrator import AIOrchestrator
 from app.services.ai_moderator import AIModerator
 from app.services.context_manager import ContextManager
 from app.services.pre_analyst import pre_analyst_service
+from app.services.followup_interpreter import create_followup_interpreter
 
 # Sistema de métricas
 from app.core.metrics import (
@@ -31,6 +33,9 @@ from app.core.metrics import (
     time_step,
     metrics_collector
 )
+
+# Importar modelos adicionales para el dashboard conversacional
+from app.models.models import ContextChunk, InteractionEvent, ModeratedSynthesis
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -57,6 +62,71 @@ def require_auth(current_user: Optional[SessionUser] = Depends(get_current_user)
 # ========================================
 # FUNCIONES AUXILIARES PARA ORQUESTACIÓN
 # ========================================
+
+async def analyze_followup_continuity(
+    user_prompt: str,
+    project_id: UUID,
+    user_id: UUID,
+    db: AsyncSession,
+    interaction_id: UUID,
+    conversation_mode: str = "auto"
+) -> tuple[str, bool]:
+    """
+    Paso -1: Análisis de continuidad conversacional con FollowUpInterpreter
+    
+    Args:
+        user_prompt: Prompt original del usuario
+        project_id: ID del proyecto
+        user_id: ID del usuario
+        db: Sesión de base de datos
+        interaction_id: ID de la interacción para métricas
+        
+    Returns:
+        tuple[enriched_prompt, is_followup]
+            - enriched_prompt: Prompt enriquecido con contexto o original si no es continuación
+            - is_followup: True si detectó continuidad conversacional
+    """
+    try:
+        with time_step(interaction_id, "followup_analysis") as timer:
+            logger.info(f"Analizando continuidad conversacional para proyecto {project_id}")
+            
+            # Crear instancia del FollowUpInterpreter
+            followup_interpreter = create_followup_interpreter(db)
+            
+            # Ejecutar análisis de continuidad y obtener QueryRequest enriquecido
+            query_request = await followup_interpreter.handle_followup(
+                user_prompt=user_prompt,
+                project_id=project_id,
+                user_id=user_id,
+                conversation_mode=conversation_mode
+            )
+            
+            # Determinar si es continuación basado en el QueryType
+            is_followup = query_request.query_type.value == "follow_up"
+            
+            # Actualizar métricas
+            timer.kwargs["is_followup"] = is_followup
+            timer.kwargs["query_type"] = query_request.query_type.value
+            timer.kwargs["prompt_enriched"] = len(query_request.user_question) > len(user_prompt)
+            
+            if is_followup:
+                logger.info(f"✅ Continuidad detectada - prompt enriquecido con contexto histórico")
+                metrics_collector.add_info(
+                    interaction_id,
+                    f"Continuidad conversacional detectada - QueryType: {query_request.query_type.value}",
+                    "followup_analysis"
+                )
+            else:
+                logger.info(f"ℹ️ Tema nuevo detectado - usando prompt original")
+            
+            return query_request.user_question, is_followup
+            
+    except Exception as e:
+        logger.warning(f"Error en análisis de continuidad para proyecto {project_id}: {e}")
+        metrics_collector.add_error(interaction_id, str(e), "followup_analysis")
+        # En caso de error, continuar con el prompt original
+        return user_prompt, False
+
 
 async def pre_analyze_query(
     user_prompt: str,
@@ -105,24 +175,23 @@ async def pre_analyze_query(
             timer.kwargs["clarification_questions_count"] = len(analysis_result.clarification_questions)
             timer.kwargs["has_refined_candidate"] = analysis_result.refined_prompt_candidate is not None
             
-            # Si hay preguntas de clarificación, necesita interacción con usuario
-            if analysis_result.clarification_questions:
-                logger.info(f"Pre-análisis requiere clarificación: {len(analysis_result.clarification_questions)} preguntas")
+            # SIEMPRE usar el refined_prompt_candidate (ahora siempre está presente)
+            refined_prompt = analysis_result.refined_prompt_candidate
+            has_clarifications = bool(analysis_result.clarification_questions)
+            
+            if has_clarifications:
+                logger.info(f"Pre-análisis sugiere clarificación: {len(analysis_result.clarification_questions)} preguntas")
+                logger.info(f"Prompt refinado disponible: {refined_prompt[:100]}...")
                 metrics_collector.add_warning(
                     interaction_id,
-                    f"Consulta requiere clarificación: {len(analysis_result.clarification_questions)} preguntas",
+                    f"Consulta tiene clarificaciones sugeridas: {len(analysis_result.clarification_questions)} preguntas",
                     "pre_analysis"
                 )
-                return user_prompt, True  # Por ahora seguimos con el prompt original
-            
-            # Si hay prompt refinado, usarlo
-            if analysis_result.refined_prompt_candidate:
-                logger.info(f"Pre-análisis generó prompt refinado")
-                return analysis_result.refined_prompt_candidate, False
-            
-            # Fallback: usar prompt original
-            logger.info(f"Pre-análisis completado: usando prompt original")
-            return user_prompt, False
+                # Retornar prompt refinado y señalar que hay clarificaciones disponibles
+                return refined_prompt, True
+            else:
+                logger.info(f"Pre-análisis completado sin clarificaciones: usando prompt refinado")
+                return refined_prompt, False
             
     except Exception as e:
         logger.warning(f"Error en pre-análisis para proyecto {project_id}: {e}")
@@ -340,7 +409,9 @@ async def save_interaction_background(
     ai_responses: list,
     synthesis_result,
     context_text: Optional[str],
-    processing_time_ms: int
+    processing_time_ms: int,
+    is_followup: bool = False,
+    enriched_prompt: Optional[str] = None
 ):
     """
     Paso 4: Guardar la interacción completa (ejecutado en background)
@@ -388,8 +459,22 @@ async def save_interaction_background(
                 "context_used": context_text is not None,
                 "context_preview": context_text[:200] + "..." if context_text and len(context_text) > 200 else context_text,
                 "processing_time_ms": processing_time_ms,
-                "created_at": datetime.utcnow().isoformat()  # Convertir a string ISO
+                "created_at": datetime.utcnow().isoformat(),  # Convertir a string ISO
+                # ✅ Metadatos específicos para continuidad conversacional
+                "followup_metadata": {
+                    "is_followup": is_followup,
+                    "enriched_prompt": enriched_prompt,
+                    "prompt_enrichment_applied": enriched_prompt is not None and enriched_prompt != user_prompt
+                }
             }
+            
+            # ✅ Logging específico para tracking de continuidad conversacional
+            if is_followup:
+                logger.info(f"🔗 Continuidad conversacional detectada en interacción {interaction_id}")
+                logger.info(f"   - Prompt original: {user_prompt[:100]}...")
+                logger.info(f"   - Prompt enriquecido: {enriched_prompt[:100] if enriched_prompt else 'N/A'}...")
+            else:
+                logger.info(f"🆕 Tema nuevo detectado en interacción {interaction_id}")
             
             # Guardar en base de datos
             await interaction_crud.create_interaction(db, interaction_data)
@@ -605,11 +690,24 @@ async def query_project(
         context_manager = ContextManager(db)
         
         # ========================================
+        # PASO 0.5: ANÁLISIS DE CONTINUIDAD CONVERSACIONAL
+        # ========================================
+        
+        enriched_prompt, is_followup = await analyze_followup_continuity(
+            user_prompt=query_request.user_prompt_text,
+            project_id=project_id,
+            user_id=user_id,
+            db=db,
+            interaction_id=interaction_id,
+            conversation_mode=query_request.conversation_mode or "auto"
+        )
+        
+        # ========================================
         # PASO 1: PRE-ANÁLISIS DE LA CONSULTA
         # ========================================
         
         refined_prompt, needs_clarification = await pre_analyze_query(
-            user_prompt=query_request.user_prompt_text,
+            user_prompt=enriched_prompt,  # Usar prompt enriquecido si hay continuidad
             project_id=project_id,
             interaction_id=interaction_id,
             force_analyze=False  # Por ahora automático
@@ -705,7 +803,10 @@ async def query_project(
             ai_responses=orchestration_result.ai_responses,
             synthesis_result=synthesis_result,
             context_text=context_text,
-            processing_time_ms=processing_time
+            processing_time_ms=processing_time,
+            # Metadatos adicionales para continuidad conversacional
+            is_followup=is_followup,
+            enriched_prompt=enriched_prompt if is_followup else None
         )
         
         logger.info(f"✅ Consulta {interaction_id} completada en {processing_time}ms")
@@ -757,4 +858,233 @@ async def query_project(
             logger.warning(f"Errores en cleanup para consulta {interaction_id}: {cleanup_errors}")
             # Registrar errores de cleanup en métricas
             for error in cleanup_errors:
-                metrics_collector.add_warning(interaction_id, error, "cleanup") 
+                metrics_collector.add_warning(interaction_id, error, "cleanup")
+
+@router.get("/{project_id}/conversation-state")
+async def get_conversation_state(
+    *,
+    db: AsyncSession = Depends(get_db),
+    project_id: UUID,
+    current_user: SessionUser = Depends(require_auth),
+) -> dict:
+    """
+    GET /api/v1/projects/{project_id}/conversation-state
+    
+    🔍 DASHBOARD CONVERSACIONAL DETALLADO
+    
+    Obtiene el estado completo de la conversación para mostrar en la interfaz:
+    - Historial de interacciones con metadatos
+    - Estado del contexto acumulado
+    - Indicadores de continuidad conversacional
+    - Métricas de rendimiento
+    - Flujo de procesamiento detallado
+    """
+    user_id = UUID(current_user.id)
+    
+    try:
+        # Verificar permisos
+        project = await project_crud.get_project(db=db, id=project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        
+        if project.user_id != user_id:
+            raise HTTPException(status_code=403, detail="No tienes permisos para acceder a este proyecto")
+        
+        # 1. Obtener historial de interacciones con metadatos
+        try:
+            interactions_stmt = select(InteractionEvent, ModeratedSynthesis).outerjoin(
+                ModeratedSynthesis, InteractionEvent.moderated_synthesis_id == ModeratedSynthesis.id
+            ).where(
+                InteractionEvent.project_id == project_id,
+                InteractionEvent.user_id == user_id,
+                InteractionEvent.deleted_at.is_(None)
+            ).order_by(InteractionEvent.created_at.desc()).limit(10)
+            
+            interactions_result = await db.exec(interactions_stmt)
+            interactions_rows = interactions_result.all()
+        except Exception as e:
+            logger.warning(f"Error obteniendo interacciones para proyecto {project_id}: {e}")
+            interactions_rows = []
+        
+        # Procesar interacciones
+        interactions_history = []
+        total_tokens_used = 0
+        followup_count = 0
+        
+        for interaction_event, moderated_synthesis in interactions_rows:
+            # Extraer metadatos de continuidad
+            followup_metadata = {}
+            ai_responses_data = {}
+            
+            if interaction_event.ai_responses_json:
+                try:
+                    ai_responses_data = json.loads(interaction_event.ai_responses_json) if isinstance(interaction_event.ai_responses_json, str) else interaction_event.ai_responses_json
+                    if isinstance(ai_responses_data, dict) and "followup_metadata" in ai_responses_data:
+                        followup_metadata = ai_responses_data["followup_metadata"]
+                except:
+                    pass
+            
+            if followup_metadata.get("is_followup", False):
+                followup_count += 1
+            
+            # Calcular tokens aproximados
+            prompt_tokens = len(interaction_event.user_prompt_text.split()) * 1.3
+            synthesis_tokens = len(moderated_synthesis.synthesis_text.split()) * 1.3 if moderated_synthesis else 0
+            total_tokens_used += prompt_tokens + synthesis_tokens
+            
+            interaction_detail = {
+                "id": str(interaction_event.id),
+                "user_prompt": interaction_event.user_prompt_text,
+                "synthesis_text": moderated_synthesis.synthesis_text if moderated_synthesis else None,
+                "created_at": interaction_event.created_at.isoformat(),
+                "processing_time_ms": interaction_event.processing_time_ms,
+                "context_used": interaction_event.context_used,
+                "context_preview": interaction_event.context_preview,
+                "followup_metadata": followup_metadata,
+                "tokens_estimated": int(prompt_tokens + synthesis_tokens),
+                "is_followup": followup_metadata.get("is_followup", False),
+                "enriched_prompt": followup_metadata.get("enriched_prompt"),
+                "prompt_enrichment_applied": followup_metadata.get("prompt_enrichment_applied", False)
+            }
+            interactions_history.append(interaction_detail)
+        
+        # 2. Obtener estado del contexto acumulado
+        try:
+            context_manager = ContextManager(db)
+            
+            # Contar chunks de contexto disponibles
+            context_chunks_stmt = select(ContextChunk).where(
+                ContextChunk.project_id == project_id,
+                ContextChunk.user_id == user_id,
+                ContextChunk.deleted_at.is_(None)
+            )
+            context_chunks_result = await db.exec(context_chunks_stmt)
+            context_chunks = context_chunks_result.all()
+        except Exception as e:
+            logger.warning(f"Error obteniendo chunks de contexto para proyecto {project_id}: {e}")
+            context_chunks = []
+        
+        # Agrupar por tipo de fuente
+        context_by_source = {}
+        total_context_chars = 0
+        
+        for chunk in context_chunks:
+            source_type = chunk.source_type
+            if source_type not in context_by_source:
+                context_by_source[source_type] = {
+                    "count": 0,
+                    "total_chars": 0,
+                    "sources": set()
+                }
+            
+            context_by_source[source_type]["count"] += 1
+            context_by_source[source_type]["total_chars"] += len(chunk.content_text)
+            context_by_source[source_type]["sources"].add(chunk.source_identifier)
+            total_context_chars += len(chunk.content_text)
+        
+        # Convertir sets a listas para JSON
+        for source_type in context_by_source:
+            context_by_source[source_type]["sources"] = list(context_by_source[source_type]["sources"])
+        
+        # 3. Métricas de rendimiento
+        recent_interactions = interactions_history[:5]  # Últimas 5
+        avg_processing_time = sum(i.get("processing_time_ms", 0) for i in recent_interactions) / len(recent_interactions) if recent_interactions else 0
+        
+        # Manejar caso de proyecto nuevo sin interacciones
+        if not interactions_history:
+            logger.info(f"Proyecto {project_id} no tiene interacciones aún - devolviendo estado inicial")
+            return {
+                "project_id": str(project_id),
+                "project_name": project.name,
+                "generated_at": datetime.utcnow().isoformat(),
+                "is_new_project": True,
+                
+                # Historial vacío
+                "interactions_history": [],
+                
+                # Estado del contexto vacío
+                "context_state": {
+                    "total_chunks": 0,
+                    "total_characters": 0,
+                    "context_by_source": {},
+                    "has_context": False
+                },
+                
+                # Métricas iniciales
+                "performance_metrics": {
+                    "total_tokens_estimated": 0,
+                    "avg_processing_time_ms": 0,
+                    "interactions_count": 0,
+                    "last_interaction_at": None
+                },
+                
+                # Estado de continuidad inicial
+                "continuity_state": {
+                    "total_interactions": 0,
+                    "followup_interactions": 0,
+                    "followup_percentage": 0,
+                    "has_active_context": False,
+                    "last_interaction_was_followup": False
+                },
+                
+                # Configuración del proyecto
+                "project_config": {
+                    "moderator_personality": project.moderator_personality,
+                    "moderator_temperature": project.moderator_temperature,
+                    "moderator_length_penalty": project.moderator_length_penalty
+                }
+            }
+        
+        # 4. Estado de continuidad conversacional
+        continuity_stats = {
+            "total_interactions": len(interactions_history),
+            "followup_interactions": followup_count,
+            "followup_percentage": round((followup_count / len(interactions_history)) * 100, 1) if interactions_history else 0,
+            "has_active_context": len(context_chunks) > 0,
+            "last_interaction_was_followup": interactions_history[0]["is_followup"] if interactions_history else False
+        }
+        
+        # 5. Respuesta completa del dashboard
+        return {
+            "project_id": str(project_id),
+            "project_name": project.name,
+            "generated_at": datetime.utcnow().isoformat(),
+            
+            # Historial detallado
+            "interactions_history": interactions_history,
+            
+            # Estado del contexto
+            "context_state": {
+                "total_chunks": len(context_chunks),
+                "total_characters": total_context_chars,
+                "context_by_source": context_by_source,
+                "has_context": len(context_chunks) > 0
+            },
+            
+            # Métricas de rendimiento
+            "performance_metrics": {
+                "total_tokens_estimated": int(total_tokens_used),
+                "avg_processing_time_ms": round(avg_processing_time, 1),
+                "interactions_count": len(interactions_history),
+                "last_interaction_at": interactions_history[0]["created_at"] if interactions_history else None
+            },
+            
+            # Estado de continuidad conversacional
+            "continuity_state": continuity_stats,
+            
+            # Estado del proyecto
+            "project_config": {
+                "moderator_personality": project.moderator_personality,
+                "moderator_temperature": project.moderator_temperature,
+                "moderator_length_penalty": project.moderator_length_penalty
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo estado conversacional para proyecto {project_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo estado conversacional: {str(e)}"
+        ) 

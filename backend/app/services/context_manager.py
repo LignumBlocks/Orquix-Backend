@@ -555,4 +555,69 @@ class ContextManager:
             if first_word not in interrogative_words:
                 return True
             
-        return False 
+        return False
+
+    async def get_recent_interaction_context(
+        self,
+        project_id: UUID,
+        user_id: UUID,
+        max_interactions: int = 1
+    ) -> List[Dict[str, str]]:
+        """
+        Recupera el contexto de las interacciones más recientes para continuidad conversacional.
+        
+        Esta función es específica para el FollowUpInterpreter y complementa la funcionalidad
+        de get_recent_conversation_history() con un formato simplificado.
+        
+        Args:
+            project_id: ID del proyecto
+            user_id: ID del usuario
+            max_interactions: Número máximo de interacciones a recuperar
+            
+        Returns:
+            Lista de diccionarios con información de las interacciones recientes
+        """
+        import json
+        from app.models.models import ModeratedSynthesis
+        
+        try:
+            # Query para obtener las interacciones más recientes con sus síntesis
+            stmt = select(InteractionEvent, ModeratedSynthesis).outerjoin(
+                ModeratedSynthesis, InteractionEvent.moderated_synthesis_id == ModeratedSynthesis.id
+            ).where(
+                InteractionEvent.project_id == project_id,
+                InteractionEvent.user_id == user_id,
+                InteractionEvent.deleted_at.is_(None)
+            ).order_by(InteractionEvent.created_at.desc()).limit(max_interactions)
+            
+            result = await self.db.exec(stmt)
+            rows = result.all()
+            
+            interactions_context = []
+            
+            for interaction_event, moderated_synthesis in rows:
+                # Extraer refined_prompt del JSON si existe
+                refined_prompt = None
+                if interaction_event.ai_responses_json:
+                    try:
+                        ai_responses = json.loads(interaction_event.ai_responses_json)
+                        if isinstance(ai_responses, dict) and "refined_prompt" in ai_responses:
+                            refined_prompt = ai_responses["refined_prompt"]
+                    except:
+                        pass
+                
+                interaction_context = {
+                    "interaction_id": str(interaction_event.id),
+                    "user_prompt": interaction_event.user_prompt_text,
+                    "refined_prompt": refined_prompt or interaction_event.user_prompt_text,
+                    "synthesis": moderated_synthesis.synthesis_text if moderated_synthesis else "",
+                    "created_at": interaction_event.created_at.isoformat()
+                }
+                
+                interactions_context.append(interaction_context)
+            
+            return interactions_context
+            
+        except Exception as e:
+            logger.error(f"Error al recuperar contexto de interacciones recientes: {str(e)}")
+            return [] 

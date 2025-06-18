@@ -1,395 +1,145 @@
-import axios from 'axios'
-import { config } from '../config'
+import config from '../config'
 
-// Configuración base de Axios
-const api = axios.create({
-  baseURL: config.API_BASE_URL,
-  timeout: 60000, // 60 segundos para consultas largas de orquestación
-  headers: {
-    'Content-Type': 'application/json',
+const handleResponse = async (response) => {
+  if (!response.ok) {
+    throw new Error(response.statusText || 'Not Found')
   }
-})
-
-// Interceptor para agregar token de autenticación
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('auth_token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
-    return config
-  },
-  (error) => Promise.reject(error)
-)
-
-// Interceptor para manejar respuestas y errores
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    // No redirigir automáticamente en ningún caso para permitir manejo manual
-    if (error.response?.status === 401) {
-      console.warn('Auth error - token may be invalid or expired')
-      // En lugar de redirigir automáticamente, solo loggear el error
-      // La aplicación puede manejar esto según sea necesario
-    }
-    return Promise.reject(error)
-  }
-)
-
-// 🔐 Servicios de Autenticación
-export const authService = {
-  async getSession() {
-    try {
-      const response = await api.get('/api/v1/auth/session')
-      return response.data
-    } catch (error) {
-      // Fallback mock para desarrollo
-      if (import.meta.env.DEV) {
-        return {
-          user: {
-            id: 'mock-user-1',
-            email: 'dev@orquix.com',
-            name: 'Developer User'
-          }
-        }
-      }
-      throw error
-    }
-  },
-
-  async validateToken() {
-    try {
-      const response = await api.post('/api/v1/auth/validate-token')
-      return response.data
-    } catch (error) {
-      if (import.meta.env.DEV) {
-        return { valid: true }
-      }
-      throw error
-    }
-  },
-
-  async getUserInfo() {
-    try {
-      const response = await api.get('/api/v1/auth/me')
-      return response.data
-    } catch (error) {
-      if (import.meta.env.DEV) {
-        return {
-          id: 'mock-user-1',
-          email: 'dev@orquix.com',
-          name: 'Developer User'
-        }
-      }
-      throw error
-    }
-  },
-
-  async signOut() {
-    try {
-      const response = await api.post('/api/v1/auth/signout')
-      localStorage.removeItem('auth_token')
-      return response.data
-    } catch (error) {
-      localStorage.removeItem('auth_token')
-      throw error
-    }
-  }
+  const data = await response.json()
+  return data
 }
 
-// 📁 Servicios de Proyectos
-export const projectService = {
-  async getProjects(skip = 0, limit = 50) {
-    try {
-      const response = await api.get('/api/v1/projects', {
-        params: { skip, limit }
-      })
-      return response.data
-    } catch (error) {
-      // Fallback con proyectos mock para desarrollo
-      if (import.meta.env.DEV && error.response?.status === 401) {
-        console.warn('Using mock projects for development')
-        return [
-          {
-            id: 'mock-project-1',
-            name: 'Demo Project - Fintech Analysis',
-            description: 'Proyecto de demostración para análisis fintech',
-            created_at: new Date().toISOString(),
-            moderator_personality: 'Analytical'
-          }
-        ]
-      }
-      throw error
-    }
-  },
-
-  async getProject(projectId) {
-    try {
-      const response = await api.get(`/api/v1/projects/${projectId}`)
-      return response.data
-    } catch (error) {
-      if (import.meta.env.DEV && error.response?.status === 401) {
-        return {
-          id: projectId,
-          name: 'Demo Project - Fintech Analysis',
-          description: 'Proyecto de demostración para análisis fintech',
-          created_at: new Date().toISOString(),
-          moderator_personality: 'Analytical'
-        }
-      }
-      throw error
-    }
-  },
-
-  async createProject(projectData) {
-    try {
-      const response = await api.post('/api/v1/projects', projectData)
-      return response.data
-    } catch (error) {
-      console.error('Error creating project:', error)
-      
-      // Solo usar fallback si no hay token o si es realmente un error de auth
-      if (import.meta.env.DEV && error.response?.status === 401 && !localStorage.getItem('auth_token')) {
-        console.warn('Using mock project creation for development (no auth token)')
-        return {
-          id: `mock-project-${Date.now()}`,
-          ...projectData,
-          created_at: new Date().toISOString()
-        }
-      }
-      throw error
-    }
-  },
-
-  async updateProject(projectId, projectData) {
-    try {
-      const response = await api.put(`/api/v1/projects/${projectId}`, projectData)
-      return response.data
-    } catch (error) {
-      if (import.meta.env.DEV && error.response?.status === 401) {
-        return {
-          id: projectId,
-          ...projectData,
-          updated_at: new Date().toISOString()
-        }
-      }
-      throw error
-    }
-  },
-
-  async deleteProject(projectId) {
-    try {
-      const response = await api.delete(`/api/v1/projects/${projectId}`)
-      return response.data
-    } catch (error) {
-      if (import.meta.env.DEV && error.response?.status === 401) {
-        return { success: true }
-      }
-      throw error
-    }
-  },
-
-  // 🌟 ENDPOINT PRINCIPAL - CONSULTA/CHAT
-  async query(projectId, queryData) {
-    try {
-      const response = await api.post(`/api/v1/projects/${projectId}/query`, queryData)
-      return response.data
-    } catch (error) {
-      // Para testing en desarrollo, crear respuesta mock
-      if (import.meta.env.DEV && error.response?.status === 401) {
-        console.warn('Using mock query response for development')
-        await new Promise(resolve => setTimeout(resolve, 2000)) // Simular delay
-        
-        return {
-          interaction_event_id: `mock-interaction-${Date.now()}`,
-          synthesis_text: `**Análisis basado en tu consulta: "${queryData.user_prompt_text}"**\n\nEsta es una respuesta de demostración del sistema Orquix. En un entorno de producción, esta respuesta sería generada por:\n\n1. **Múltiples IAs especializadas** trabajando en paralelo\n2. **Moderador IA v2.0** sintetizando las respuestas\n3. **Context Manager** proporcionando información relevante\n\nLas características clave incluyen:\n- Orquestación inteligente de múltiples proveedores de IA\n- Síntesis de alta calidad con meta-análisis\n- Tiempo de respuesta optimizado\n- Fallback automático en caso de errores`,
-          moderator_quality: 'high',
-          key_themes: ['demo', 'orquestación', 'IA múltiple', 'síntesis'],
-          contradictions: [],
-          consensus_areas: ['funcionalidad básica', 'interfaz responsive'],
-          recommendations: [
-            'Conectar con backend real para funcionalidad completa',
-            'Configurar autenticación apropiada',
-            'Revisar logs del sistema para troubleshooting'
-          ],
-          suggested_questions: [
-            '¿Cómo funciona la orquestación de IAs?',
-            '¿Qué hace el moderador v2.0?',
-            '¿Cuáles son las ventajas del sistema?'
-          ],
-          research_areas: ['arquitectura distribuida', 'síntesis de IA', 'moderación inteligente'],
-          individual_responses: [
-            {
-              agent_name: 'Agent1',
-              response: 'Respuesta desde perspectiva técnica...',
-              processing_time_ms: 1200
-            },
-            {
-              agent_name: 'Agent2', 
-              response: 'Respuesta desde perspectiva analítica...',
-              processing_time_ms: 980
-            }
-          ],
-          processing_time_ms: 1850,
-          fallback_used: false,
-          created_at: new Date().toISOString()
-        }
-      }
-      throw error
-    }
+// Función para obtener headers con autenticación
+const getAuthHeaders = () => {
+  const token = localStorage.getItem('auth_token')
+  const headers = {
+    'Content-Type': 'application/json'
   }
+  
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  
+  return headers
 }
 
-// 📜 Servicios de Historial
-export const historyService = {
-  async getInteractions(projectId, page = 1, perPage = 20) {
-    try {
-      const response = await api.get(`/api/v1/projects/${projectId}/interaction_events`, {
-        params: { page, per_page: perPage }
-      })
-      return response.data
-    } catch (error) {
-      if (import.meta.env.DEV && error.response?.status === 401) {
-        return { interactions: [] }
-      }
-      throw error
-    }
-  },
-
-  async getInteractionDetail(projectId, interactionId) {
-    try {
-      const response = await api.get(`/api/v1/projects/${projectId}/interaction_events/${interactionId}`)
-      return response.data
-    } catch (error) {
-      if (import.meta.env.DEV && error.response?.status === 401) {
-        return { interaction: null }
-      }
-      throw error
-    }
-  },
-
-  async deleteInteraction(projectId, interactionId) {
-    try {
-      const response = await api.delete(`/api/v1/projects/${projectId}/interaction_events/${interactionId}`)
-      return response.data
-    } catch (error) {
-      if (import.meta.env.DEV && error.response?.status === 401) {
-        return { success: true }
-      }
-      throw error
-    }
-  }
-}
-
-// 💬 Servicios de Feedback
-export const feedbackService = {
-  async createFeedback(feedbackData) {
-    const response = await api.post('/api/v1/feedback', feedbackData)
-    return response.data
-  },
-
-  async getFeedback(page = 1, perPage = 20, filters = {}) {
-    const response = await api.get('/api/v1/feedback', {
-      params: { page, per_page: perPage, ...filters }
+const api = {
+  // Proyectos
+  getProjects: async () => {
+    const response = await fetch(`${config.apiUrl}/api/v1/projects`, {
+      method: 'GET',
+      headers: getAuthHeaders()
     })
-    return response.data
+    return handleResponse(response)
   },
 
-  async getFeedbackStats(referenceType = null, days = 30) {
-    const response = await api.get('/api/v1/feedback/stats', {
-      params: { reference_type: referenceType, days }
+  createProject: async (projectData) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/projects`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(projectData)
     })
-    return response.data
+    return handleResponse(response)
   },
 
-  async deleteFeedback(feedbackId) {
-    const response = await api.delete(`/api/v1/feedback/${feedbackId}`)
-    return response.data
-  }
-}
-
-// 🏥 Servicios de Health/Estado
-export const healthService = {
-  async getHealth() {
-    const response = await api.get('/api/v1/health')
-    return response.data
+  // Conversaciones
+  getConversations: async (projectId) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/projects/${projectId}/interaction_events`, {
+      method: 'GET',
+      headers: getAuthHeaders()
+    })
+    return handleResponse(response)
   },
 
-  async getDetailedHealth() {
-    const response = await api.get('/api/v1/health/detailed')
-    return response.data
-  },
-
-  async getDatabaseHealth() {
-    const response = await api.get('/api/v1/health/database')
-    return response.data
-  },
-
-  async getAiProvidersHealth() {
-    const response = await api.get('/api/v1/health/ai-providers')
-    return response.data
-  },
-
-  async getSystemHealth() {
-    const response = await api.get('/api/v1/health/system')
-    return response.data
-  },
-
-  // Métricas de orquestación
-  async getOrchestrationMetrics(days = 1) {
-    try {
-      const response = await api.get('/api/v1/health/orchestration/metrics', {
-        params: { days }
+  // ==========================================
+  // NUEVO: Construcción de Contexto Conversacional
+  // ==========================================
+  
+  // Enviar mensaje en construcción de contexto
+  sendContextMessage: async (projectId, userMessage, sessionId = null) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/context-chat/projects/${projectId}/context-chat`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        user_message: userMessage,
+        session_id: sessionId
       })
-      return response.data
-    } catch (error) {
-      if (import.meta.env.DEV) {
-        return { metrics: {} }
-      }
-      throw error
-    }
+    })
+    return handleResponse(response)
   },
 
-  async getActiveOrchestrations() {
-    try {
-      const response = await api.get('/api/v1/health/orchestration/active')
-      return response.data
-    } catch (error) {
-      if (import.meta.env.DEV) {
-        return { active: [] }
-      }
-      throw error
-    }
+  // Obtener sesión de contexto actual
+  getContextSession: async (sessionId) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${sessionId}`, {
+      method: 'GET',
+      headers: getAuthHeaders()
+    })
+    return handleResponse(response)
   },
 
-  async getPerformanceMetrics() {
-    try {
-      const response = await api.get('/api/v1/health/orchestration/performance')
-      return response.data
-    } catch (error) {
-      if (import.meta.env.DEV) {
-        return {
-          avg_response_time_ms: 1500,
-          total_queries_today: 0,
-          success_rate: 100,
-          active_sessions: 1
+  // Finalizar construcción de contexto y enviar a IAs principales
+  finalizeContextSession: async (sessionId, finalQuestion) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${sessionId}/finalize`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        session_id: sessionId,
+        final_question: finalQuestion
+      })
+    })
+    return handleResponse(response)
+  },
+
+  // ==========================================
+  // ENDPOINTS ORIGINALES (mantener compatibilidad)
+  // ==========================================
+
+  // Pre-análisis y consultas
+  analyzePrompt: async (prompt, projectId) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/pre-analyst/analyze-prompt`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        user_prompt_text: prompt
+      })
+    })
+    return handleResponse(response)
+  },
+
+  sendQuery: async (query, projectId, clarificationResponse = null) => {
+    const endpoint = clarificationResponse 
+      ? `${config.apiUrl}/api/v1/projects/${projectId}/clarify`
+      : `${config.apiUrl}/api/v1/projects/${projectId}/query`
+
+    const body = clarificationResponse
+      ? { 
+          original_query: query,
+          clarification_response: clarificationResponse 
         }
-      }
-      throw error
-    }
-  }
-}
+      : { 
+          user_prompt_text: query,
+          include_context: true,
+          conversation_mode: "auto"
+        }
 
-// 🎯 Utilidades
-export const utilsService = {
-  async getApiInfo() {
-    const response = await api.get('/api')
-    return response.data
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body)
+    })
+    return handleResponse(response)
   },
 
-  async getApiStatus() {
-    const response = await api.get('/api/status')
-    return response.data
+  // Clarificaciones
+  submitClarification: async (projectId, originalQuery, clarificationResponse) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/projects/${projectId}/clarify`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        original_query: originalQuery,
+        clarification_response: clarificationResponse
+      })
+    })
+    return handleResponse(response)
   }
 }
 
