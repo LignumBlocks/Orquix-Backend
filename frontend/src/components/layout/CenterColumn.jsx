@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { MicIcon, SendIcon, LoaderIcon, AlertCircleIcon, MessageSquareIcon, BrainIcon, SparklesIcon, ArrowRightIcon } from 'lucide-react'
+import { MicIcon, SendIcon, LoaderIcon, AlertCircleIcon, MessageSquareIcon, BrainIcon, SparklesIcon, ArrowRightIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
 import useAppStore from '../../store/useAppStore'
 import ConversationFlow from '../ui/ConversationFlow'
 import AIResponseCard from '../ui/AIResponseCard'
@@ -7,20 +7,21 @@ import ClarificationDialog from '../ui/ClarificationDialog'
 import ConversationStatePanel from '../ui/ConversationStatePanel'
 
 const CenterColumn = ({ activeProject }) => {
-  const [message, setMessage] = useState('')
-  const [isRecording, setIsRecording] = useState(false)
-  const [error, setError] = useState(null)
-  const [isProcessing, setIsProcessing] = useState(false)
-  const [isSendingToAIs, setIsSendingToAIs] = useState(false)
   const [contextSession, setContextSession] = useState(null)
   const [conversationFlow, setConversationFlow] = useState([])
-  const [finalPrompts, setFinalPrompts] = useState(null)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState(null)
+  const [isQuerying, setIsQuerying] = useState(false)
+  const [isSendingToAIs, setIsSendingToAIs] = useState(false)
+  const [isContextBuilding, setIsContextBuilding] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  const [expandedPrompts, setExpandedPrompts] = useState({})
   const chatContainerRef = useRef(null)
 
   const {
     conversations,
     activeConversation,
-    isQuerying,
     clarificationLoading,
     clarificationNeeded,
     clarificationQuestions,
@@ -32,7 +33,7 @@ const CenterColumn = ({ activeProject }) => {
     contextMessages,
     accumulatedContext,
     contextSessionId,
-    isContextBuilding,
+    isContextBuilding: storeIsContextBuilding,
     sendContextMessage,
     finalizeContextSession,
     clearLoadingStates
@@ -44,7 +45,6 @@ const CenterColumn = ({ activeProject }) => {
     setError(null)
     setConversationFlow([])
     setContextSession(null)
-    setFinalPrompts(null)
   }, [activeProject?.id, clearLoadingStates])
 
   // Auto-limpiar errores después de 5 segundos
@@ -155,9 +155,9 @@ const CenterColumn = ({ activeProject }) => {
     }
   }
 
-  const handleSendToAIs = async () => {
-    if (!contextSession?.session_id) {
-      setError('No hay sesión de contexto activa')
+  const handleGeneratePrompts = async () => {
+    if (!contextSession?.session_id || !activeProject?.id) {
+      setError('No hay sesión de contexto o proyecto activo')
       return
     }
 
@@ -169,8 +169,10 @@ const CenterColumn = ({ activeProject }) => {
       const lastInteraction = conversationFlow[conversationFlow.length - 1]
       const suggestedQuestion = lastInteraction?.suggested_final_question || "¿Qué recomendaciones me puedes dar basándote en este contexto?"
 
-      // Finalizar la sesión de contexto
-      const finalizeResponse = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSession.session_id}/finalize`, {
+      console.log('🎯 Generando prompts para las IAs:', suggestedQuestion)
+
+      // Generar los prompts usando el sistema correcto con prompt_templates.py
+      const finalizeResponse = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSession.session_id}/generate-ai-prompts`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -187,42 +189,24 @@ const CenterColumn = ({ activeProject }) => {
       }
 
       const finalizeData = await finalizeResponse.json()
+      console.log('📋 Prompts generados con prompt_templates.py:', finalizeData)
 
-      // Generar los prompts reales usando el servicio del backend
-      const promptsResponse = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSession.session_id}/generate-ai-prompts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer dev-mock-token-12345'
-        },
-        body: JSON.stringify({
-          session_id: contextSession.session_id,
-          final_question: finalizeData.final_question
-        })
-      })
-
-      if (!promptsResponse.ok) {
-        throw new Error(`Error al generar prompts: ${promptsResponse.status}`)
-      }
-
-      const promptsData = await promptsResponse.json()
-
-      // Agregar los prompts reales al flujo conversacional
+      // Agregar los prompts generados al flujo conversacional
       const promptsInteraction = {
         id: Date.now() + 1,
-        type: 'final_prompts',
-        prompts: promptsData.ai_prompts,
-        finalized_context: finalizeData.accumulated_context,
-        final_question: finalizeData.final_question,
+        type: 'prompts_generated',
+        user_question: suggestedQuestion,
+        prompts: finalizeData.ai_prompts || {},
+        context_used: finalizeData.context_used || '',
+        prompt_system: finalizeData.prompt_system || 'query_service + prompt_templates',
         timestamp: new Date()
       }
 
       setConversationFlow(prev => [...prev, promptsInteraction])
-      setFinalPrompts(promptsData.ai_prompts)
 
     } catch (error) {
-      console.error('Error al enviar a las IAs:', error)
-      setError(error.message || 'Error al enviar a las IAs')
+      console.error('Error al generar prompts:', error)
+      setError(error.message || 'Error al generar prompts para las IAs')
     } finally {
       setIsSendingToAIs(false)
     }
@@ -390,76 +374,294 @@ const CenterColumn = ({ activeProject }) => {
                        </div>
                      </div>
                    </>
-                 ) : interaction.type === 'final_prompts' ? (
-                   /* Renderizar prompts finales */
+                 ) : interaction.type === 'prompts_generated' ? (
+                   /* Renderizar prompts generados */
                    <div className="space-y-4">
                      <div className="text-center p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-200">
-                       <h3 className="text-lg font-semibold text-green-800 mb-2">🎯 Contexto Finalizado y Enviado a las IAs</h3>
-                       <p className="text-sm text-green-700">Los siguientes prompts se han generado para las IAs principales:</p>
+                       <h3 className="text-lg font-semibold text-green-800 mb-2">✨ Prompts Generados para las IAs</h3>
+                       <p className="text-sm text-green-700 mb-2">Los siguientes prompts están listos para las IAs principales:</p>
+                       <p className="text-xs text-green-600 font-medium">"{interaction.user_question}"</p>
                      </div>
                      
-                     {/* Prompts para cada IA disponible */}
-                     {interaction.prompts.openai && (
-                       <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                         <div className="flex items-center space-x-2 mb-3">
-                           <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                           <span className="font-medium text-green-800">{interaction.prompts.openai.provider} ({interaction.prompts.openai.model})</span>
-                         </div>
-                         
-                         {/* Parámetros */}
-                         <div className="mb-3 p-2 bg-green-100 rounded text-xs">
-                           <span className="font-medium">Parámetros:</span> 
-                           max_tokens: {interaction.prompts.openai.parameters.max_tokens}, 
-                           temperature: {interaction.prompts.openai.parameters.temperature}
-                         </div>
-                         
-                         {/* System Message */}
-                         <div className="mb-3">
-                           <div className="text-xs font-medium text-green-800 mb-1">SYSTEM MESSAGE:</div>
-                           <div className="text-xs text-green-700 bg-white p-2 rounded border">
-                             {interaction.prompts.openai.system_message}
+                     {/* Info del sistema usado */}
+                     {interaction.prompt_system && (
+                       <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                         <div className="text-xs font-medium text-blue-800 mb-1">SISTEMA DE PROMPTS:</div>
+                         <div className="text-xs text-blue-700">{interaction.prompt_system}</div>
+                         {interaction.context_used && (
+                           <div className="mt-2">
+                             <div className="text-xs font-medium text-blue-800 mb-1">CONTEXTO UTILIZADO:</div>
+                             <div className="text-xs text-blue-700 italic">{interaction.context_used}</div>
                            </div>
+                         )}
+                       </div>
+                     )}
+
+                     {/* Prompts para cada IA disponible */}
+                     {Object.entries(interaction.prompts || {}).map(([providerKey, promptData]) => {
+                       const isOpenAI = providerKey === 'openai'
+                       const bgColor = isOpenAI ? 'bg-green-50 border-green-200' : 'bg-orange-50 border-orange-200'
+                       const textColor = isOpenAI ? 'text-green-800' : 'text-orange-800'
+                       const dotColor = isOpenAI ? 'bg-green-500' : 'bg-orange-500'
+                       const lightBg = isOpenAI ? 'bg-green-100' : 'bg-orange-100'
+                       
+                       if (promptData.error) {
+                         return (
+                           <div key={providerKey} className={`${bgColor} border rounded-lg p-4 mb-4`}>
+                             <div className="flex items-center space-x-2 mb-3">
+                               <div className={`w-3 h-3 ${dotColor} rounded-full`}></div>
+                               <span className={`font-medium ${textColor}`}>{promptData.provider}</span>
+                             </div>
+                             <div className="text-red-600 text-sm">⚠️ {promptData.error}</div>
+                           </div>
+                         )
+                       }
+
+                       return (
+                         <div key={providerKey} className={`${bgColor} border rounded-lg p-4 mb-4`}>
+                           <div className="flex items-center space-x-2 mb-3">
+                             <div className={`w-3 h-3 ${dotColor} rounded-full`}></div>
+                             <span className={`font-medium ${textColor}`}>
+                               {promptData.provider} ({promptData.model})
+                             </span>
+                             {promptData.template_used && (
+                               <span className="text-xs bg-white px-2 py-1 rounded">
+                                 {promptData.template_used}
+                               </span>
+                             )}
+                           </div>
+                           
+                           {/* Parámetros */}
+                           {promptData.parameters && (
+                             <div className={`mb-3 p-2 ${lightBg} rounded text-xs`}>
+                               <span className="font-medium">Parámetros:</span> 
+                               max_tokens: {promptData.parameters.max_tokens}, 
+                               temperature: {promptData.parameters.temperature}
+                             </div>
+                           )}
+                           
+                           {/* System Message */}
+                           {promptData.system_message && (
+                             <div className="mb-4">
+                               <button
+                                 onClick={() => {
+                                   const key = `system-${providerKey}`
+                                   setExpandedPrompts(prev => ({
+                                     ...prev,
+                                     [key]: !prev[key]
+                                   }))
+                                 }}
+                                 className={`w-full flex items-center justify-between text-xs font-medium ${textColor} mb-2 p-2 rounded hover:bg-gray-50`}
+                               >
+                                 <span>SYSTEM MESSAGE: (Click para expandir/colapsar)</span>
+                                 {expandedPrompts[`system-${providerKey}`] ? 
+                                   <ChevronUpIcon className="w-3 h-3" /> : 
+                                   <ChevronDownIcon className="w-3 h-3" />
+                                 }
+                               </button>
+                               {expandedPrompts[`system-${providerKey}`] && (
+                                 <div className={`text-xs ${textColor} bg-white p-4 rounded border max-h-96 overflow-y-auto leading-relaxed`}>
+                                   <div className="whitespace-pre-wrap">
+                                     {promptData.system_message.split('**').map((part, index) => {
+                                       if (index % 2 === 1) {
+                                         // Texto entre ** se formatea como negrita
+                                         return <strong key={index} className="font-bold text-gray-900">{part}</strong>
+                                       }
+                                       return part
+                                     }).map((part, index) => {
+                                       if (typeof part === 'string') {
+                                         // Dividir por párrafos y aplicar formato
+                                         return part.split('\n\n').map((paragraph, pIndex) => (
+                                           <div key={`${index}-${pIndex}`} className="mb-3">
+                                             {paragraph.split('\n').map((line, lIndex) => (
+                                               <div key={lIndex} className={
+                                                 line.trim().startsWith('###') ? 'font-semibold mt-3 mb-2 text-blue-800 text-sm' : 
+                                                 line.trim().startsWith('**') && line.trim().endsWith('**') ? 'font-bold mt-2 mb-1 text-gray-900' :
+                                                 line.trim().startsWith('- ') ? 'ml-6 mb-1 pl-2 border-l-2 border-gray-200' : 
+                                                 line.trim() === '' ? 'mb-2' : 'mb-1'
+                                               }>
+                                                 {line}
+                                               </div>
+                                             ))}
+                                           </div>
+                                         ))
+                                       }
+                                       return part
+                                     })}
+                                   </div>
+                                 </div>
+                               )}
+                             </div>
+                           )}
+                           
+                           {/* User Prompt */}
+                           {promptData.user_prompt && (
+                             <div className="mb-3">
+                               <button
+                                 onClick={() => {
+                                   const key = `user-${providerKey}`
+                                   setExpandedPrompts(prev => ({
+                                     ...prev,
+                                     [key]: !prev[key]
+                                   }))
+                                 }}
+                                 className={`w-full flex items-center justify-between text-xs font-medium ${textColor} mb-2 p-2 rounded hover:bg-gray-50`}
+                               >
+                                 <span>USER PROMPT: (Click para expandir/colapsar)</span>
+                                 {expandedPrompts[`user-${providerKey}`] ? 
+                                   <ChevronUpIcon className="w-3 h-3" /> : 
+                                   <ChevronDownIcon className="w-3 h-3" />
+                                 }
+                               </button>
+                               {expandedPrompts[`user-${providerKey}`] && (
+                                 <div className={`text-xs ${textColor} bg-white p-4 rounded border max-h-64 overflow-y-auto leading-relaxed`}>
+                                   <div className="whitespace-pre-wrap">
+                                     {promptData.user_prompt.split('**').map((part, index) => {
+                                       if (index % 2 === 1) {
+                                         // Texto entre ** se formatea como negrita
+                                         return <strong key={index} className="font-bold text-gray-900">{part}</strong>
+                                       }
+                                       return part
+                                     }).map((part, index) => {
+                                       if (typeof part === 'string') {
+                                         // Dividir por párrafos y aplicar formato
+                                         return part.split('\n\n').map((paragraph, pIndex) => (
+                                           <div key={`${index}-${pIndex}`} className="mb-3">
+                                             {paragraph.split('\n').map((line, lIndex) => (
+                                               <div key={lIndex} className={
+                                                 line.trim().startsWith('###') ? 'font-semibold mt-3 mb-2 text-blue-800 text-sm' : 
+                                                 line.trim().startsWith('**') && line.trim().endsWith('**') ? 'font-bold mt-2 mb-1 text-gray-900' :
+                                                 line.trim().startsWith('- ') ? 'ml-6 mb-1 pl-2 border-l-2 border-gray-200' : 
+                                                 line.trim() === '' ? 'mb-2' : 'mb-1'
+                                               }>
+                                                 {line}
+                                               </div>
+                                             ))}
+                                           </div>
+                                         ))
+                                       }
+                                       return part
+                                     })}
+                                   </div>
+                                 </div>
+                               )}
+                             </div>
+                           )}
                          </div>
+                       )
+                     })}
+                   </div>
+                 ) : interaction.type === 'ai_result' ? (
+                   /* Renderizar resultado de las IAs */
+                   <div className="space-y-4">
+                     {/* Header con la pregunta */}
+                     <div className="text-center p-4 bg-gradient-to-r from-emerald-50 to-cyan-50 rounded-lg border-2 border-emerald-300">
+                       <h3 className="text-lg font-semibold text-emerald-800 mb-2">🎯 Respuesta de las IAs Principales</h3>
+                       <p className="text-sm text-emerald-700 font-medium">{interaction.user_question}</p>
+                       <div className="mt-2 text-xs text-emerald-600">
+                         Procesado en {interaction.processing_time_ms}ms • Calidad: {interaction.moderator_quality}
+                       </div>
+                     </div>
+                     
+                     {/* Síntesis Principal */}
+                     <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-5">
+                       <div className="flex items-center space-x-2 mb-3">
+                         <BrainIcon className="w-5 h-5 text-blue-600" />
+                         <span className="font-semibold text-blue-800">SÍNTESIS MODERADA</span>
+                       </div>
+                       <div className="text-gray-800 leading-relaxed">
+                         {interaction.synthesis_text}
+                       </div>
+                     </div>
+                     
+                     {/* Meta-análisis */}
+                     {(interaction.key_themes?.length > 0 || interaction.recommendations?.length > 0) && (
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                         {/* Temas Clave */}
+                         {interaction.key_themes?.length > 0 && (
+                           <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                             <div className="flex items-center space-x-2 mb-3">
+                               <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
+                               <span className="font-medium text-purple-800">TEMAS CLAVE</span>
+                             </div>
+                             <ul className="space-y-1">
+                               {interaction.key_themes.map((theme, idx) => (
+                                 <li key={idx} className="text-sm text-purple-700">• {theme}</li>
+                               ))}
+                             </ul>
+                           </div>
+                         )}
                          
-                         {/* Prompt principal */}
-                         <div className="mb-3">
-                           <div className="text-xs font-medium text-green-800 mb-1">USER PROMPT:</div>
-                           <pre className="text-xs text-green-700 whitespace-pre-wrap bg-white p-3 rounded border max-h-40 overflow-y-auto">
-                             {interaction.prompts.openai.user_prompt}
-                           </pre>
-                         </div>
+                         {/* Recomendaciones */}
+                         {interaction.recommendations?.length > 0 && (
+                           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                             <div className="flex items-center space-x-2 mb-3">
+                               <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                               <span className="font-medium text-green-800">RECOMENDACIONES</span>
+                             </div>
+                             <ul className="space-y-1">
+                               {interaction.recommendations.map((rec, idx) => (
+                                 <li key={idx} className="text-sm text-green-700">• {rec}</li>
+                               ))}
+                             </ul>
+                           </div>
+                         )}
                        </div>
                      )}
                      
-                     {interaction.prompts.anthropic && (
-                       <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-                         <div className="flex items-center space-x-2 mb-3">
-                           <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
-                           <span className="font-medium text-orange-800">{interaction.prompts.anthropic.provider} ({interaction.prompts.anthropic.model})</span>
-                         </div>
+                     {/* Respuestas Individuales */}
+                     {interaction.individual_responses?.length > 0 && (
+                       <div className="space-y-3">
+                         <h4 className="font-medium text-gray-800 flex items-center space-x-2">
+                           <ArrowRightIcon className="w-4 h-4" />
+                           <span>Respuestas Individuales de las IAs</span>
+                         </h4>
                          
-                         {/* Parámetros */}
-                         <div className="mb-3 p-2 bg-orange-100 rounded text-xs">
-                           <span className="font-medium">Parámetros:</span> 
-                           max_tokens: {interaction.prompts.anthropic.parameters.max_tokens}, 
-                           temperature: {interaction.prompts.anthropic.parameters.temperature}
-                         </div>
-                         
-                         {/* System Message */}
-                         <div className="mb-3">
-                           <div className="text-xs font-medium text-orange-800 mb-1">SYSTEM MESSAGE:</div>
-                           <div className="text-xs text-orange-700 bg-white p-2 rounded border">
-                             {interaction.prompts.anthropic.system_message}
+                         {interaction.individual_responses.map((response, idx) => (
+                           <div key={idx} className={`border rounded-lg p-4 ${
+                             response.provider === 'openai' ? 'bg-green-50 border-green-200' : 
+                             response.provider === 'anthropic' ? 'bg-orange-50 border-orange-200' : 
+                             'bg-gray-50 border-gray-200'
+                           }`}>
+                             <div className="flex items-center space-x-2 mb-3">
+                               <div className={`w-3 h-3 rounded-full ${
+                                 response.provider === 'openai' ? 'bg-green-500' : 
+                                 response.provider === 'anthropic' ? 'bg-orange-500' : 
+                                 'bg-gray-500'
+                               }`}></div>
+                               <span className={`font-medium ${
+                                 response.provider === 'openai' ? 'text-green-800' : 
+                                 response.provider === 'anthropic' ? 'text-orange-800' : 
+                                 'text-gray-800'
+                               }`}>
+                                 {response.provider?.toUpperCase()} {response.model && `(${response.model})`}
+                               </span>
+                             </div>
+                             
+                             <div className={`text-sm whitespace-pre-wrap ${
+                               response.provider === 'openai' ? 'text-green-800' : 
+                               response.provider === 'anthropic' ? 'text-orange-800' : 
+                               'text-gray-800'
+                             }`}>
+                               {response.content || response.response}
+                             </div>
                            </div>
+                         ))}
+                       </div>
+                     )}
+                     
+                     {/* Preguntas Sugeridas */}
+                     {interaction.suggested_questions?.length > 0 && (
+                       <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                         <div className="flex items-center space-x-2 mb-3">
+                           <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                           <span className="font-medium text-yellow-800">PREGUNTAS SUGERIDAS</span>
                          </div>
-                         
-                         {/* Prompt principal */}
-                         <div className="mb-3">
-                           <div className="text-xs font-medium text-orange-800 mb-1">USER PROMPT:</div>
-                           <pre className="text-xs text-orange-700 whitespace-pre-wrap bg-white p-3 rounded border max-h-40 overflow-y-auto">
-                             {interaction.prompts.anthropic.user_prompt}
-                           </pre>
-                         </div>
+                         <ul className="space-y-1">
+                           {interaction.suggested_questions.map((question, idx) => (
+                             <li key={idx} className="text-sm text-yellow-700">• {question}</li>
+                           ))}
+                         </ul>
                        </div>
                      )}
                    </div>
@@ -467,11 +669,11 @@ const CenterColumn = ({ activeProject }) => {
                </div>
              ))}
              
-             {/* Botón "Enviar a las IAs" - siempre visible si hay contexto */}
-             {conversationFlow.length > 0 && !finalPrompts && (
+             {/* Botón "Generar Prompts" - siempre visible si hay contexto */}
+             {conversationFlow.length > 0 && !conversationFlow.some(interaction => interaction.type === 'prompts_generated') && (
                <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4">
                  <button
-                   onClick={handleSendToAIs}
+                   onClick={handleGeneratePrompts}
                    disabled={isSendingToAIs}
                    className={`w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-lg font-medium transition-colors ${
                      isSendingToAIs
@@ -482,12 +684,12 @@ const CenterColumn = ({ activeProject }) => {
                    {isSendingToAIs ? (
                      <>
                        <LoaderIcon className="w-5 h-5 animate-spin" />
-                       <span>Enviando a las IAs...</span>
+                       <span>Generando Prompts...</span>
                      </>
                    ) : (
                      <>
-                       <ArrowRightIcon className="w-5 h-5" />
-                       <span>Enviar a las IAs Principales</span>
+                       <SparklesIcon className="w-5 h-5" />
+                       <span>Generar Prompts para las IAs</span>
                      </>
                    )}
                  </button>
