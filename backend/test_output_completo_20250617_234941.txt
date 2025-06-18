@@ -1,0 +1,45 @@
+================================================================================
+🧪 PRUEBA COMPLETA DEL SISTEMA DE CONSTRUCCIÓN DE CONTEXTO
+================================================================================
+
+Fecha: 2025-06-17 23:49:41
+Proyecto: c9cc165a-6fed-4134-bf20-0e5897e3b7c8
+Sesión: e0cc5950-5d55-4d1f-b20f-b391b902195f
+
+================================================================================
+🧪 PRUEBA COMPLETA DEL FLUJO DE CONSTRUCCIÓN DE CONTEXTO
+================================================================================
+
+🏥 Verificando salud del backend...
+✅ Backend funcionando correctamente
+
+💬 INICIANDO CONVERSACIÓN DE CONSTRUCCIÓN DE CONTEXTO
+
+📝 MENSAJE 1/5
+
+📝 MENSAJE 2/5
+
+📝 MENSAJE 3/5
+
+📝 MENSAJE 4/5
+
+📝 MENSAJE 5/5
+
+🎯 OBTENIENDO CONTEXTO FINAL
+
+📚 HISTORIAL CONVERSACIONAL COMPLETO
+
+🏁 FINALIZANDO CONSTRUCCIÓN DE CONTEXTO
+
+🎯 PROCESO DE ENVÍO A LAS IAs PRINCIPALES
+📋 FLUJO REAL DEL SISTEMA:
+
+🤖 PROMPTS ESPECÍFICOS POR IA:
+
+🤖 PROMPT REAL DEL AI MODERATOR
+❌ Error mostrando prompt real: 1 validation error for StandardAIResponse
+latency_ms
+  Field required [type=missing, input_value={'response_text': 'Ejempl...200, 'tokens_used': 150}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.11/v/missing
+
+✅ PRUEBA COMPLETADA EXITOSAMENTE

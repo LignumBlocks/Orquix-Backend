@@ -1,18 +1,17 @@
 // Configuración de la aplicación
-export const config = {
+const isDev = import.meta.env.DEV
+
+const config = {
   // API Base URL dinámico para desarrollo y producción
-  API_BASE_URL: import.meta.env.VITE_API_BASE_URL || 
-                (import.meta.env.PROD 
-                  ? 'https://orquix-backend.onrender.com'  // URL de producción en Render
-                  : 'http://localhost:8000'                // URL de desarrollo
-                ),
+  apiUrl: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+  API_BASE_URL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
     
   APP_NAME: import.meta.env.VITE_APP_NAME || 'Orquix',
   VERSION: import.meta.env.VITE_APP_VERSION || '1.0.0',
   
   // Configuraciones específicas del entorno
-  ENVIRONMENT: import.meta.env.MODE,
-  IS_DEVELOPMENT: import.meta.env.DEV,
+  ENVIRONMENT: import.meta.env.MODE || 'development',
+  IS_DEVELOPMENT: isDev,
   IS_PRODUCTION: import.meta.env.PROD,
   
   // Timeouts y límites
@@ -39,8 +38,8 @@ export const config = {
   SYSTEM_HEALTH_CHECK_INTERVAL: 60000, // 1 minuto
   
   // Configuración de autenticación mock para desarrollo
-  ENABLE_MOCK_AUTH: import.meta.env.VITE_ENABLE_MOCK_AUTH === 'true' || import.meta.env.DEV,
-  ENABLE_DEBUGGING: import.meta.env.VITE_ENABLE_DEBUGGING === 'true' || import.meta.env.DEV,
+  ENABLE_MOCK_AUTH: import.meta.env.VITE_ENABLE_MOCK_AUTH === 'true' || isDev,
+  ENABLE_DEBUGGING: import.meta.env.VITE_ENABLE_DEBUGGING === 'true' || isDev,
   
   // Endpoints principales
   ENDPOINTS: {
@@ -49,4 +48,6 @@ export const config = {
     FEEDBACK: '/api/v1/feedback',
     HEALTH: '/api/v1/health',
   },
-}; 
+};
+
+export default config 

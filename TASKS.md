@@ -1,191 +1,233 @@
-# Orquix - Moderador de IA v2.0 Implementation
+# 📋 TAREAS ORQUIX-BACKEND
 
-Plataforma completa de orquestación de múltiples IAs con interfaz responsive y deployment en producción.
+## 🎉 HITOS IMPORTANTES ALCANZADOS - 18 DE JUNIO 2025
 
-## Completed Tasks
+### ✨ **ETAPA 1 DEL FLUJO COMPLETADA EXITOSAMENTE**
 
-- [x] Configuración inicial del proyecto
-- [x] Estructura backend FastAPI con endpoints principales
-- [x] Implementación del sistema de autenticación mock
-- [x] Base de datos PostgreSQL con esquemas principales
-- [x] Integración con múltiples proveedores de IA (OpenAI, Anthropic, Groq, Together)
-- [x] Sistema de Context Manager acumulativo
-- [x] Moderador v2.0 con síntesis inteligente
-- [x] Frontend React con Zustand store
-- [x] Componentes UI principales (sidebars, chat, modales)
-- [x] Sistema de notificaciones toast
-- [x] Métricas y monitoreo de IA providers
-- [x] Deployment backend en Render (Web Service)
-- [x] Configuración CORS para producción
-- [x] **Interfaz responsive completa**
-- [x] **Navegación móvil con tabs**
-- [x] **Layout adaptativo (móvil/tablet/desktop)**
-- [x] **Deployment frontend en Render (Static Site)**
-- [x] **Corrección de problemas de layout móvil**
+**🎯 Logro Principal**: Se ha implementado exitosamente la **Etapa 1** del nuevo flujo simplificado de Orquix:
 
-## In Progress Tasks
+1. **✅ Context Building Funcional**: El sistema de construcción de contexto guía perfectamente al usuario
+2. **✅ Generación de Prompts Elaborados**: Los prompts ahora usan los templates sofisticados de 600-800 palabras
+3. **✅ Interfaz Mejorada**: Formato legible con botones colapsar/expandir para una UX excelente
+4. **✅ Arquitectura Correcta**: Endpoint `/generate-ai-prompts` usando `query_service` + `prompt_templates.py`
 
-- [ ] Optimización de rendimiento en móviles
-- [ ] Testing en diferentes navegadores y dispositivos
-- [ ] Documentación de usuario final
+### 🚀 **ETAPA 2 DEL FLUJO COMPLETADA EXITOSAMENTE**
 
-## Future Tasks
+**🎯 Logro Principal**: Se ha implementado exitosamente la **Etapa 2** - Consulta Individual a las IAs:
 
-### High Priority
-- [ ] **Tarea 1.4: Historial Conversacional Corto** - Incorporación de memoria conversacional para referencias implícitas
-- [ ] Implementación de speech-to-text en móvil
-- [ ] Optimización de Context Manager con historial reciente
+1. **✅ Endpoint Específico**: `/context-sessions/{session_id}/query-ais` para consultas individuales
+2. **✅ Respuestas Separadas**: OpenAI y Anthropic con diseño diferenciado y tiempos de procesamiento
+3. **✅ Botón Condicional**: "Consultar a las IAs" visible solo después de generar prompts
+4. **✅ Sistema de Reintentos**: Botón "🔄 Reintentar" para IAs fallidas con endpoint `/retry-ai/{provider}`
+5. **✅ UX Robusta**: Estados de carga, manejo de errores, y actualización automática de respuestas
 
-### Medium Priority  
-- [ ] Gestos táctiles avanzados (swipe, pinch)
-- [ ] Modo offline/PWA
-- [ ] Push notifications
-- [ ] Compartir conversaciones
-- [ ] Exportar a PDF
-- [ ] Themes/modo oscuro
+**📊 Impacto Etapa 2**: 
+- **Tiempo de desarrollo**: 90 minutos para implementar flujo completo
+- **Funcionalidad robusta**: Manejo inteligente de fallos y reintentos automáticos
+- **Experiencia excepcional**: Respuestas individuales con diseño diferenciado por proveedor
+- **Arquitectura escalable**: Fácil agregar nuevos proveedores de IA
 
-### Low Priority
-- [ ] Analíticas de uso
-- [ ] Integración con más proveedores de IA
-- [ ] Sistema de plugins/extensiones
+**🎉 Estado Actual**: **FLUJO COMPLETO FUNCIONAL** - Ambas etapas operativas y testeadas exitosamente
 
-## Implementation Plan
+---
 
-### Arquitectura Responsive
+## 🚨 CRITICAL REFACTOR (Inmediato - <2h)
 
-La aplicación utiliza un diseño **mobile-first** con breakpoints específicos:
+### 1. ✅ [Refactor] Simplificar Flujo - Etapa 1: Solo Generar Prompt
+**Archivo**: `frontend/src/components/layout/CenterColumn.jsx`
+**Objetivo**: Dividir flujo en 2 etapas claras
+**Cambios**:
+- ✅ Cambiar botón "Enviar a las IAs" → "Generar Prompt para las IAs"
+- ✅ Modificar `handleSendToAIs` → `handleGeneratePrompts` (no llamar `/query`)
+- ✅ Mantener context builder como está (funciona bien)
+- ✅ Mostrar prompt generado y terminar etapa
+- ✅ **CORREGIDO**: Usar endpoint correcto `/generate-ai-prompts` con `prompt_templates.py`
+- ✅ **CORREGIDO**: Renderizar prompts elaborados en lugar de fallbacks simples
+**Tiempo estimado**: 45 minutos
+**Estado**: 🟢 Completada
 
-- **Mobile (< 768px)**: Navegación por tabs, layout de columna única
-- **Tablet (768px - 1024px)**: Layout híbrido con sidebars colapsables  
-- **Desktop (> 1024px)**: Layout de 3 columnas completo
+### 1.1. ✅ [Feature] Implementar Etapa 2: Consulta Individual a IAs
+**Archivos**: 
+- `backend/app/api/v1/endpoints/context_chat.py` (nuevo endpoint `/query-ais`)
+- `frontend/src/components/layout/CenterColumn.jsx` (botón condicional + renderizado)
+**Objetivo**: Consultar IAs individualmente con sistema de reintentos
+**Cambios**:
+- ✅ Endpoint específico `/context-sessions/{session_id}/query-ais` 
+- ✅ Endpoint de reintento `/context-sessions/{session_id}/retry-ai/{provider}`
+- ✅ Botón "Consultar a las IAs" visible solo después de generar prompts
+- ✅ Respuestas individuales con diseño diferenciado (OpenAI verde, Anthropic naranja)
+- ✅ Botón "🔄 Reintentar" en respuestas fallidas
+- ✅ Estados de carga y manejo robusto de errores
+**Tiempo estimado**: 90 minutos
+**Estado**: 🟢 Completada
 
-### Tecnologías Utilizadas
+### 2. ❌ [Bug] Missing add_info Method in MetricsCollector  
+**Archivo**: `backend/app/core/metrics.py`
+**Problema**: `'OrchestrationMetricsCollector' object has no attribute 'add_info'`
+**Solución**: Añadir método `add_info()` a la clase
+**Tiempo estimado**: 20 minutos
+**Estado**: 🔴 Pendiente
 
-**Backend:**
-- FastAPI + PostgreSQL
-- Múltiples proveedores de IA
-- Sistema de Context Manager
-- Deployment: Render Web Service
+### 2. ✅ [UX] Mejorar Formato de Prompts Generados
+**Archivo**: `frontend/src/components/layout/CenterColumn.jsx`
+**Problema**: Los prompts se muestran en una línea continua, difícil de leer
+**Solución**: 
+- ✅ Aplicar formato Markdown (negritas, párrafos, listas)
+- ✅ Botones para colapsar/expandir secciones largas (SYSTEM/USER)
+- ✅ Mejor espaciado y legibilidad con bordes y indentación
+- ✅ Altura ajustable y scroll para textos largos
+**Tiempo estimado**: 30 minutos
+**Estado**: 🟢 Completada
 
-**Frontend:**
-- React + Vite + Tailwind CSS
-- Zustand para state management
-- Lucide React iconos
-- Deployment: Render Static Site
+### 3. ❌ [Bug] Synthesis Preview Truncation Error
+**Archivo**: `backend/app/api/v1/endpoints/interactions.py`
+**Problema**: Campo `synthesis_preview` excede límite de 300 caracteres en InteractionSummary
+**Solución**: Truncar a 297 chars + "..." en líneas 108 y 164
+**Tiempo estimado**: 15 minutos
+**Estado**: 🔴 Pendiente
 
-### URLs de Producción
+---
 
-- **Backend**: `https://orquix-backend.onrender.com`
-- **Frontend**: `https://orquix-frontend.onrender.com`
+## 🏃‍♂️ SPRINT 1: Polish & UX (1-2 semanas)
 
-## Próxima Funcionalidad Prioritaria
+### 4. 🎨 [UX] Loading States Mejorados
+**Archivo**: `frontend/src/components/ui/ConversationFlow.jsx`
+**Descripción**: Añadir indicadores de progreso específicos para cada fase (contexto → AI → síntesis)
+**Tiempo estimado**: 30 minutos
+**Estado**: ⏳ Planificado
 
-### 🧠 Tarea 1.4: Historial Conversacional Corto
+### 5. 🛡️ [UX] Error Handling Robusto  
+**Archivos**: 
+- `frontend/src/components/layout/CenterColumn.jsx`
+- `frontend/src/services/api.js`
+**Descripción**: Mostrar errores específicos y opciones de reintento
+**Tiempo estimado**: 45 minutos
+**Estado**: ⏳ Planificado
 
-**Problema**: Los usuarios utilizan referencias implícitas en conversaciones multi-turno como "Dame los últimos 4", "Mejora eso", "Lo que me diste antes", etc. Estas frases carecen de contenido semántico suficiente para la búsqueda vectorial.
+### 6. 📱 [UX] Mobile Optimization
+**Archivos**: 
+- `frontend/src/components/ui/AIResponseCard.jsx`
+- `frontend/src/App.css`
+**Descripción**: Mejorar visualización en móviles del chat de resultados
+**Tiempo estimado**: 40 minutos
+**Estado**: ⏳ Planificado
 
-**Solución**: Incorporar historial conversacional reciente para enriquecer el contexto antes de procesar nuevas consultas.
+### 7. ⚡ [Performance] AI Response Caching
+**Archivo**: `backend/app/services/ai_orchestrator.py`
+**Descripción**: Cache temporal para respuestas similares
+**Tiempo estimado**: 45 minutos
+**Estado**: ⏳ Planificado
 
-#### Implementación Técnica
+### 8. 📊 [UX] Metrics Dashboard Simple
+**Archivo**: `frontend/src/components/ui/MetricsDisplay.jsx`
+**Descripción**: Mostrar tiempo de respuesta y calidad de síntesis
+**Tiempo estimado**: 35 minutos
+**Estado**: ⏳ Planificado
 
-1. **Recuperación de Historial**:
-   ```sql
-   SELECT user_prompt_text, moderated_synthesis
-   FROM interaction_events
-   WHERE project_id = ? AND user_id = ?
-   ORDER BY created_at DESC
-   LIMIT 3
-   ```
+---
 
-2. **Enriquecimiento de Prompt**:
-   ```python
-   enriched_prompt = f"""
-   Historial reciente:
-   {historial_formateado}
-   ---
-   Nueva pregunta: {user_prompt}
-   """
-   ```
+## 🚀 SPRINT 2: New Features (2-3 semanas)
 
-3. **Integración con Context Manager**:
-   - Usar `enriched_prompt` para búsqueda vectorial en `pgvector`
-   - Pasar contexto enriquecido a las IAs orquestadas
-   - Mantener coherencia en la síntesis del Moderador
+### 9. 🔄 [Feature] Persistencia y Continuidad de Sesiones
+**Archivos**: 
+- `backend/app/models/context_session.py` (usar existente)
+- `backend/app/models/conversation_history.py` (usar existente)  
+- `backend/app/models/interaction_events.py` (usar existente)
+- `backend/app/api/v1/endpoints/context_chat.py` (nuevos endpoints)
+- `frontend/src/components/ui/SessionSelector.jsx` (nuevo)
+**Descripción**: 
+- Permitir volver a sesiones anteriores y continuar conversación
+- Guardar historial completo en `conversation_history` y `interaction_events`
+- UI para listar y seleccionar sesiones del proyecto
+- Restaurar estado completo de sesión (contexto + historial + prompts)
+**Endpoints nuevos**:
+- `GET /projects/{id}/sessions` - Listar sesiones del proyecto
+- `GET /context-sessions/{id}/full-state` - Estado completo de sesión
+- `POST /context-sessions/{id}/continue` - Continuar sesión existente
+**Tiempo estimado**: 90 minutos (feature compleja)
+**Estado**: ⏳ Planificado
 
-#### Archivos a Modificar
+### 10. 🔗 [Feature] Continuity Indicators  
+**Archivos**: 
+- `frontend/src/components/ui/ContinuityIndicator.jsx`
+- `backend/app/api/v1/endpoints/projects.py`
+**Descripción**: Mostrar conexiones entre conversaciones relacionadas
+**Tiempo estimado**: 45 minutos
+**Estado**: ⏳ Planificado
 
-- `backend/app/services/context_manager.py` - Lógica de enriquecimiento
-- `backend/app/services/query_service.py` - Integración con orquestación
-- `backend/app/routers/ai_orchestrator.py` - Endpoint actualizado
+### 11. 🧠 [Feature] PreAnalyst Frontend Integration
+**Archivos**: 
+- `frontend/src/components/ui/PreAnalystDisplay.jsx`
+- `frontend/src/services/api.js`
+**Descripción**: Mostrar resultados del pre-análisis en la UI
+**Tiempo estimado**: 45 minutos
+**Estado**: ⏳ Planificado
 
-#### Beneficios
+### 12. 💾 [Feature] Conversation Export
+**Archivos**: 
+- `frontend/src/components/ui/ConversationExport.jsx`
+- `backend/app/api/v1/endpoints/interactions.py`
+**Descripción**: Exportar conversaciones completas en PDF/MD
+**Tiempo estimado**: 45 minutos
+**Estado**: ⏳ Planificado
 
-- ✅ Mejora comprensión de preguntas anafóricas
-- ✅ Compatible con arquitectura actual (usa `interaction_events`)
-- ✅ Escalable (configurable por cantidad de eventos o tokens)
-- ✅ No requiere cambios de esquema de BD
+### 13. 🔍 [Feature] Advanced Search
+**Archivos**: 
+- `frontend/src/components/ui/SearchDialog.jsx`
+- `backend/app/services/embeddings.py`
+**Descripción**: Búsqueda semántica en conversaciones históricas
+**Tiempo estimado**: 45 minutos
+**Estado**: ⏳ Planificado
 
-## Relevant Files
+---
 
-### Backend Core ✅
-- `backend/app/main.py` - FastAPI app principal con CORS
-- `backend/app/routers/ai_orchestrator.py` - Endpoints de orquestación  
-- `backend/app/routers/projects.py` - Gestión de proyectos
-- `backend/app/routers/moderator.py` - Moderador v2.0
-- `backend/app/database/database.py` - Configuración PostgreSQL
-- `backend/app/database/models.py` - Modelos SQLAlchemy
+## 📋 GUIDELINES
 
-### Frontend Responsive ✅
-- `frontend/src/App.jsx` - Layout responsive principal
-- `frontend/src/components/layout/MobileNavigation.jsx` - Navegación móvil
-- `frontend/src/components/layout/LeftSidebar.jsx` - Sidebar proyectos (responsive)
-- `frontend/src/components/layout/CenterColumn.jsx` - Chat principal (responsive)
-- `frontend/src/components/layout/RightSidebar.jsx` - Agentes IA (responsive)
-- `frontend/src/index.css` - Estilos responsive y móviles
+### ⏱️ Tiempo de Tareas
+- **Critical Fixes**: < 45 minutos cada una
+- **Sprint Tasks**: < 45 minutos cada una
+- Si una tarea toma más de 45 minutos, dividirla en subtareas
 
-### Configuration ✅
-- `render.yaml` - Configuración fullstack deployment
-- `frontend/vite.config.js` - Build optimizado para producción
-- `frontend/src/config.js` - URLs dinámicas dev/prod
-- `frontend/public/_redirects` - SPA routing para Render
-- `frontend/index.html` - Meta tags optimizados para móvil
+### 🧪 Testing
+- Cada tarea debe incluir testing inmediato
+- No pasar a la siguiente tarea sin confirmar que la anterior funciona
+- Usar `test_sistema_real_completo.py` para validación end-to-end
 
-### Documentation ✅
-- `DEPLOYMENT.md` - Guía completa de deployment
-- `README.md` - Arquitectura y URLs de producción
-- `docs/frontend_deployment_render.md` - Opción B implementada
+### 📝 Commits
+- Un commit por tarea completada
+- Formato: `[tipo] descripción corta - #tarea`
+- Ejemplo: `[fix] truncar synthesis_preview - #1`
 
-## Testing Checklist
+### 🎯 Priorización
+1. **Critical Fixes**: Resolver todos antes de continuar
+2. **Sprint 1**: UX y polish básico
+3. **Sprint 2**: Features nuevas
 
-### Mobile Testing (< 768px)
-- [ ] iPhone SE (375x667) - Navegación tabs
-- [ ] iPhone 12 Pro (390x844) - Layout responsive  
-- [ ] Galaxy Fold (280x653) - Pantallas muy pequeñas
-- [ ] Orientación portrait/landscape
-- [ ] Touch gestures y scrolling
+### 🔄 Estado de Tareas
+- 🔴 **Pendiente**: No iniciada
+- 🟡 **En Progreso**: Actualmente trabajando
+- 🟢 **Completada**: Funciona y testeada
+- ⏳ **Planificado**: Definida pero no iniciada
+- ❌ **Bloqueada**: Requiere otra tarea
 
-### Tablet Testing (768px - 1024px)  
-- [ ] iPad (768x1024) - Layout híbrido
-- [ ] Surface Pro (912x1368) - Windows tablet
+---
 
-### Desktop Testing (> 1024px)
-- [ ] 1920x1080 - Layout 3 columnas
-- [ ] 4K displays - Escalado
-- [ ] Diferentes browsers (Chrome, Firefox, Safari, Edge)
+## 📈 PROGRESO ACTUAL
 
-## Performance Metrics
+**Critical Refactor**: 3/4 ✅ (75% completado)  
+**Sprint 1**: 0/5 ✅  
+**Sprint 2**: 0/5 ✅  
 
-- [ ] Lighthouse mobile score > 90
-- [ ] First Contentful Paint < 1.5s
-- [ ] Time to Interactive < 3s
-- [ ] Bundle size analysis
-- [ ] Core Web Vitals optimization
+**Total**: 3/15 tareas completadas (20%)
 
-## Deployment Status
+### 🎯 Archivos Relevantes Actualizados
 
-- ✅ **Backend**: Deployado y funcional en Render
-- ✅ **Frontend**: Deployado con Static Site en Render  
-- ✅ **Database**: PostgreSQL en Render
-- ✅ **CORS**: Configurado para producción
-- ✅ **SSL**: Certificados automáticos
-- ✅ **CDN**: Global con Render Static Site
+#### ✅ Completados
+- `backend/app/api/v1/endpoints/context_chat.py` - Endpoints de generación de prompts, consulta individual y reintentos
+- `frontend/src/components/layout/CenterColumn.jsx` - Flujo completo de 2 etapas con sistema de reintentos
+- `frontend/src/components/ui/ContextBuildingFlow.jsx` - Construcción de contexto (sin cambios, funcionando)
+
+#### 🔄 Arquitectura Implementada
+- **Etapa 1**: Context Building → Prompt Generation (usando `query_service` + `prompt_templates.py`)
+- **Etapa 2**: Individual AI Queries → Retry System (usando `ai_orchestrator`)
+- **UX Flow**: Botones condicionales → Estados de carga → Respuestas diferenciadas → Reintentos automáticos

@@ -78,11 +78,21 @@ class InteractionEvent(SQLModel, table=True):
     user_feedback_score: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
     user_feedback_comment: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, index=True))
+    updated_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
+    deleted_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True, index=True))
     ai_responses_json: Optional[str] = Field(default=None, sa_column=Column(JSONB, nullable=True))
     moderator_synthesis_json: Optional[str] = Field(default=None, sa_column=Column(JSONB, nullable=True))
     context_used: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, default=False))
     context_preview: Optional[str] = Field(default=None, sa_column=Column(String(500), nullable=True))
     processing_time_ms: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
+    
+    # NUEVO: Tipo de interacción
+    interaction_type: str = Field(default="final_query", sa_column=Column(String(50), nullable=False, default="final_query"))
+    # Valores posibles: "context_building", "final_query"
+    
+    # NUEVO: Estado de sesión para construcción de contexto
+    session_status: Optional[str] = Field(default=None, sa_column=Column(String(20), nullable=True))
+    # Valores posibles: "active", "completed", "abandoned" (solo para context_building)
 
     # Relationships
     project: Project = Relationship(back_populates="interaction_events")

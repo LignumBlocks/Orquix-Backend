@@ -12,6 +12,7 @@ Características demostradas:
 - Acumulación progresiva de contexto
 - Sugerencias inteligentes
 - Finalización y preparación para IAs principales
+- Prompts reales del AI Moderator
 """
 
 import asyncio
@@ -85,7 +86,7 @@ class SistemaContextoCompleto:
             self.log_and_print("\n✅ PRUEBA COMPLETADA EXITOSAMENTE", style="bold green")
             
             # 5. Guardar output en archivo
-            await self.guardar_output_archivo()
+            return await self.guardar_output_archivo()
             
         except Exception as e:
             self.log_and_print(f"\n❌ ERROR EN LA PRUEBA: {e}", style="bold red")
@@ -143,25 +144,13 @@ class SistemaContextoCompleto:
         # Mostrar request
         self.mostrar_detalles_request(request_data)
         
-        # Enviar request con timeout extendido
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            try:
-                response = await client.post(
-                    f"{API_BASE}/context-chat/projects/{self.project_id}/context-chat",
-                    json=request_data,
-                    headers=self.headers
-                )
-            except httpx.ReadTimeout:
-                self.log_and_print(f"⏱️ TIMEOUT en el mensaje {paso} - El backend tardó más de 60 segundos", style="yellow")
-                self.log_and_print("🔄 Reintentando con timeout más largo...", style="yellow")
-                
-                # Reintentar con timeout aún más largo
-                async with httpx.AsyncClient(timeout=120.0) as retry_client:
-                    response = await retry_client.post(
-                        f"{API_BASE}/context-chat/projects/{self.project_id}/context-chat",
-                        json=request_data,
-                        headers=self.headers
-                    )
+        # Enviar request
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{API_BASE}/context-chat/projects/{self.project_id}/context-chat",
+                json=request_data,
+                headers=self.headers
+            )
             
             if response.status_code == 200:
                 response_data = response.json()
@@ -355,7 +344,7 @@ class SistemaContextoCompleto:
 2. El AI Orchestrator construye requests específicos para cada IA
 3. Cada IA recibe su prompt optimizado según su modelo
 4. Las respuestas se procesan por el AI Moderator
-5. El AI Moderator genera una síntesis unificada
+5. El AI Moderator genera una síntesis unificada usando prompts v2.0
         """.strip()
         
         panel_flujo = Panel(
@@ -384,7 +373,7 @@ PREGUNTA FINAL:
         # Simular cómo se construirían los prompts específicos
         self.log_and_print("\n🤖 PROMPTS ESPECÍFICOS POR IA:", style="bold magenta")
         
-        # Prompt para OpenAI (simulado)
+        # Prompt para OpenAI (simulado basado en OpenAIAdapter)
         openai_prompt = f"""Eres un asistente experto que proporciona respuestas precisas y útiles.
 
 CONTEXTO:
@@ -402,109 +391,93 @@ Proporciona una respuesta detallada y específica."""
         )
         console.print(panel_openai)
         
-        # USAR EL SERVICIO REAL DE AI MODERATOR
-        await self.mostrar_prompt_real_ai_moderator(resultado_finalizacion)
-    
-    async def mostrar_prompt_real_ai_moderator(self, resultado_finalizacion):
-        """Muestra el prompt real que usa el AI Moderator para síntesis."""
-        self.log_and_print("\n🤖 PROMPT REAL DEL AI MODERATOR", style="bold red")
+        # Prompt para Anthropic (simulado basado en AnthropicAdapter)
+        anthropic_prompt = f"""Human: {resultado_finalizacion['accumulated_context']}
+
+{resultado_finalizacion['final_question']}
+
+Por favor, proporciona una respuesta detallada y específica basándote en el contexto proporcionado."""
         
-        try:
-            # Importar y crear instancia del AI Moderator
-            from app.services.ai_moderator import AIModerator
-            moderator = AIModerator()
-            
-            # Crear respuestas mock para demostración
-            from app.schemas.ai_response import StandardAIResponse, AIResponseStatus, AIProviderEnum
-            
-            mock_responses = [
-                StandardAIResponse(
-                    response_text="Ejemplo de respuesta de OpenAI para el contexto acumulado",
-                    status=AIResponseStatus.SUCCESS,
-                    ia_provider_name=AIProviderEnum.OPENAI,
-                    response_time_ms=1200,
-                    tokens_used=150
-                ),
-                StandardAIResponse(
-                    response_text="Ejemplo de respuesta de Anthropic para el contexto acumulado",
-                    status=AIResponseStatus.SUCCESS,
-                    ia_provider_name=AIProviderEnum.ANTHROPIC,
-                    response_time_ms=1100,
-                    tokens_used=140
-                )
-            ]
-            
-            # Obtener el prompt real que usa el moderador
-            real_prompt = moderator._create_synthesis_prompt(mock_responses)
-            
-            # Mostrar el prompt real
-            panel_prompt_real = Panel(
-                real_prompt[:2000] + "..." if len(real_prompt) > 2000 else real_prompt,
-                title="🎯 PROMPT REAL DEL AI MODERATOR",
-                border_style="red"
-            )
-            console.print(panel_prompt_real)
-            
-            self.log_and_print(f"\n📏 Longitud del prompt real: {len(real_prompt)} caracteres", style="yellow")
-            
-            # Explicar cómo se usa en el flujo real
-            explicacion_flujo = """
-El prompt mostrado arriba es el que realmente se envía al LLM de síntesis (Claude 3 Haiku o GPT-3.5-Turbo) 
-para generar el meta-análisis profesional. Este prompt:
+        panel_anthropic = Panel(
+            anthropic_prompt,
+            title="🔵 PROMPT PARA ANTHROPIC (CLAUDE)",
+            border_style="blue"
+        )
+        console.print(panel_anthropic)
+        
+        # Mostrar el prompt del AI Moderator v2.0 (el más importante)
+        self.log_and_print("\n🧠 PROMPT DEL AI MODERATOR v2.0:", style="bold red")
+        
+        moderator_prompt = f"""**System Role:**
+Eres un asistente de meta-análisis objetivo, analítico y altamente meticuloso. Tu tarea principal es procesar un conjunto de respuestas de múltiples modelos de IA diversos (`external_ai_responses`) a una consulta específica del investigador (`user_question`). Tu objetivo es generar un reporte estructurado, claro y altamente accionable (objetivo total de salida: aproximadamente 800-1000 tokens) que ayude al investigador a:
+    a) Comprender las perspectivas diversas y contribuciones clave de cada IA.
+    b) Identificar puntos cruciales de consenso y contradicciones factuales obvias.
+    c) Reconocer cobertura temática, énfasis y omisiones notables.
+    d) Definir pasos lógicos y accionables para su investigación o consulta.
 
-1. Incluye instrucciones detalladas para meta-análisis v2.0
-2. Estructura exacta esperada en la respuesta
-3. Criterios de validación y calidad
-4. Las respuestas reales de las IAs consultadas
-5. Auto-validación interna
+**INPUT DATA:**
 
-El resultado es una síntesis estructurada que se devuelve al usuario.
-            """.strip()
-            
-            panel_explicacion = Panel(
-                explicacion_flujo,
-                title="💡 CÓMO FUNCIONA EL FLUJO REAL",
-                border_style="cyan"
-            )
-            console.print(panel_explicacion)
-            
-        except Exception as e:
-            self.log_and_print(f"❌ Error mostrando prompt real: {e}", style="red")
+**user_question:** {resultado_finalizacion['final_question']}
+
+**external_ai_responses:**
+[AI_Modelo_OPENAI] dice: [Respuesta de OpenAI aquí]
+
+[AI_Modelo_ANTHROPIC] dice: [Respuesta de Anthropic aquí]
+
+Por favor, genera el meta-análisis siguiendo exactamente la estructura especificada en el prompt v2.0."""
+        
+        panel_moderator = Panel(
+            moderator_prompt,
+            title="🧠 PROMPT DEL AI MODERATOR v2.0 (META-ANÁLISIS)",
+            border_style="red"
+        )
+        console.print(panel_moderator)
+        
+        # Mostrar estadísticas finales
+        tabla_stats = Table(title="📈 ESTADÍSTICAS DEL SISTEMA")
+        tabla_stats.add_column("Métrica", style="cyan")
+        tabla_stats.add_column("Valor", style="white")
+        
+        tabla_stats.add_row("Contexto acumulado (chars)", str(len(resultado_finalizacion['accumulated_context'])))
+        tabla_stats.add_row("Pregunta final (chars)", str(len(resultado_finalizacion['final_question'])))
+        tabla_stats.add_row("Prompt OpenAI (chars)", str(len(openai_prompt)))
+        tabla_stats.add_row("Prompt Anthropic (chars)", str(len(anthropic_prompt)))
+        tabla_stats.add_row("Prompt Moderator (chars)", str(len(moderator_prompt)))
+        
+        console.print(tabla_stats)
     
     async def guardar_output_archivo(self):
-        """Guarda toda la salida en un archivo para documentación."""
+        """Guarda toda la salida en un archivo."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"test_output_completo_{timestamp}.txt"
+        archivo_output = f"test_output_completo_final_{timestamp}.txt"
         
-        try:
-            with open(filename, 'w', encoding='utf-8') as f:
-                f.write("=" * 80 + "\n")
-                f.write("🧪 PRUEBA COMPLETA DEL SISTEMA DE CONSTRUCCIÓN DE CONTEXTO\n")
-                f.write("=" * 80 + "\n\n")
-                f.write(f"Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Proyecto: {self.project_id}\n")
-                f.write(f"Sesión: {self.session_id}\n\n")
-                
-                for line in self.output_lines:
-                    f.write(line + "\n")
-            
-            self.log_and_print(f"\n📁 Output guardado en: {filename}", style="green")
-            
-        except Exception as e:
-            self.log_and_print(f"❌ Error guardando archivo: {e}", style="red")
+        # Obtener todo el output de la consola
+        output_completo = console.export_text()
+        
+        # Escribir al archivo
+        with open(archivo_output, 'w', encoding='utf-8') as f:
+            f.write("🧪 DEMOSTRACIÓN COMPLETA DEL SISTEMA DE CONSTRUCCIÓN DE CONTEXTO\n")
+            f.write("=" * 80 + "\n")
+            f.write(f"Fecha y hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("=" * 80 + "\n\n")
+            f.write(output_completo)
+            f.write(f"\n\n" + "=" * 80)
+            f.write(f"\nArchivo generado: {archivo_output}")
+            f.write(f"\nFecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            f.write("\n" + "=" * 80)
+        
+        self.log_and_print(f"\n📄 Salida completa guardada en: {archivo_output}", style="bold blue")
+        
+        return archivo_output
 
 
 async def main():
-    """Función principal del script de prueba."""
-    try:
-        sistema = SistemaContextoCompleto()
-        await sistema.ejecutar_demostracion_completa()
-    except KeyboardInterrupt:
-        print("\n⚠️ Prueba interrumpida por el usuario")
-    except Exception as e:
-        print(f"\n❌ Error fatal: {e}")
-        raise
+    """Función principal."""
+    sistema = SistemaContextoCompleto()
+    archivo_generado = await sistema.ejecutar_demostracion_completa()
+    print(f"\n🎉 ¡Demostración completada! Archivo generado: {archivo_generado}")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Ejecutar la demostración completa
+    asyncio.run(main()) 
