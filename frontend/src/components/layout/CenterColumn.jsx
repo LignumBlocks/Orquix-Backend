@@ -19,6 +19,10 @@ const CenterColumn = ({ activeProject }) => {
   const [expandedPrompts, setExpandedPrompts] = useState({})
   const [isQueryingAIs, setIsQueryingAIs] = useState(false)
   const [retryingProviders, setRetryingProviders] = useState({}) // Track which providers are being retried
+  const [isGeneratingModeratorPrompt, setIsGeneratingModeratorPrompt] = useState(false)
+  const [moderatorPromptData, setModeratorPromptData] = useState(null)
+  const [isSynthesizing, setIsSynthesizing] = useState(false)
+  const [synthesisData, setSynthesisData] = useState(null)
   const chatContainerRef = useRef(null)
 
   const {
@@ -335,6 +339,113 @@ const CenterColumn = ({ activeProject }) => {
       setError(`Error reintentando ${provider.toUpperCase()}: ${error.message}`)
     } finally {
       setRetryingProviders(prev => ({ ...prev, [provider]: false }))
+    }
+  }
+
+  const handleGenerateModeratorPrompt = async () => {
+    if (!contextSession?.session_id) {
+      setError('No hay sesión de contexto activa')
+      return
+    }
+
+    setIsGeneratingModeratorPrompt(true)
+    setError(null)
+
+    try {
+      const lastInteraction = conversationFlow[conversationFlow.length - 1]
+      const userQuestion = lastInteraction?.user_question || "¿Qué recomendaciones me puedes dar?"
+
+      console.log('📝 Generando prompt del moderador para sesión:', contextSession.session_id)
+
+      const response = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSession.session_id}/generate-moderator-prompt`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer dev-mock-token-12345'
+        },
+        body: JSON.stringify({
+          session_id: contextSession.session_id,
+          final_question: userQuestion
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(`Error generando prompt del moderador: ${response.status}`)
+      }
+
+      const promptData = await response.json()
+      console.log('📝 Prompt del moderador generado:', promptData)
+
+      setModeratorPromptData(promptData)
+
+      // Agregar el prompt al flujo conversacional
+      const promptInteraction = {
+        id: Date.now() + 100,
+        type: 'moderator_prompt_generated',
+        prompt_data: promptData,
+        timestamp: new Date()
+      }
+
+      setConversationFlow(prev => [...prev, promptInteraction])
+
+    } catch (error) {
+      console.error('Error generando prompt del moderador:', error)
+      setError(`Error generando prompt del moderador: ${error.message}`)
+    } finally {
+      setIsGeneratingModeratorPrompt(false)
+    }
+  }
+
+  const handleSynthesizeResponses = async () => {
+    if (!contextSession?.session_id) {
+      setError('No hay sesión de contexto activa')
+      return
+    }
+
+    setIsSynthesizing(true)
+    setError(null)
+
+    try {
+      const lastInteraction = conversationFlow[conversationFlow.length - 1]
+      const userQuestion = lastInteraction?.user_question || "¿Qué recomendaciones me puedes dar?"
+
+      console.log('🔬 Ejecutando síntesis del moderador para sesión:', contextSession.session_id)
+
+      const response = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSession.session_id}/synthesize`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          session_id: contextSession.session_id,
+          final_question: userQuestion
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || `Error del servidor: ${response.status}`)
+      }
+
+      const synthesisResult = await response.json()
+      console.log('✅ Síntesis completada:', synthesisResult)
+
+      setSynthesisData(synthesisResult)
+
+      // Agregar la síntesis al flujo conversacional
+      const synthesisInteraction = {
+        type: 'synthesis_completed',
+        synthesis_data: synthesisResult,
+        timestamp: new Date().toISOString()
+      }
+
+      setConversationFlow(prev => [...prev, synthesisInteraction])
+
+    } catch (error) {
+      console.error('Error ejecutando síntesis:', error)
+      setError(`Error ejecutando síntesis: ${error.message}`)
+    } finally {
+      setIsSynthesizing(false)
     }
   }
 
@@ -880,6 +991,245 @@ const CenterColumn = ({ activeProject }) => {
                        })}
                      </div>
                    </div>
+                 ) : interaction.type === 'synthesis_completed' ? (
+                   /* Renderizar síntesis del moderador */
+                   <div className="space-y-6">
+                     <div className="text-center p-4 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg border border-purple-200">
+                       <h3 className="text-lg font-semibold text-purple-800 mb-2">🔬 Síntesis del Moderador Completada</h3>
+                       <p className="text-sm text-purple-700 mb-2">
+                         Análisis de {interaction.synthesis_data?.metadata?.responses_analyzed || 0} respuestas
+                       </p>
+                       <p className="text-xs text-purple-600 font-medium">
+                         Tiempo de síntesis: {interaction.synthesis_data?.metadata?.synthesis_time_ms || 0}ms
+                       </p>
+                     </div>
+
+                     {/* Síntesis principal */}
+                     <div className="bg-white rounded-lg border border-gray-200 p-6">
+                       <h4 className="text-lg font-semibold text-gray-800 mb-4">📋 Síntesis Principal</h4>
+                       <div className="prose prose-sm max-w-none text-gray-700">
+                         {interaction.synthesis_data?.synthesis?.text?.split('\n').map((paragraph, idx) => (
+                           paragraph.trim() && (
+                             <p key={idx} className="mb-3">{paragraph}</p>
+                           )
+                         ))}
+                       </div>
+                     </div>
+
+                     {/* Análisis estructurado */}
+                     <div className="grid md:grid-cols-2 gap-4">
+                       {/* Temas clave */}
+                       {interaction.synthesis_data?.synthesis?.key_themes?.length > 0 && (
+                         <div className="bg-blue-50 rounded-lg border border-blue-200 p-4">
+                           <h5 className="font-semibold text-blue-800 mb-3 flex items-center">
+                             <span className="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
+                             Temas Clave
+                           </h5>
+                           <ul className="space-y-2">
+                             {interaction.synthesis_data.synthesis.key_themes.map((theme, idx) => (
+                               <li key={idx} className="text-sm text-blue-700 flex items-start">
+                                 <span className="text-blue-500 mr-2">•</span>
+                                 {theme}
+                               </li>
+                             ))}
+                           </ul>
+                         </div>
+                       )}
+
+                       {/* Áreas de consenso */}
+                       {interaction.synthesis_data?.synthesis?.consensus_areas?.length > 0 && (
+                         <div className="bg-green-50 rounded-lg border border-green-200 p-4">
+                           <h5 className="font-semibold text-green-800 mb-3 flex items-center">
+                             <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
+                             Áreas de Consenso
+                           </h5>
+                           <ul className="space-y-2">
+                             {interaction.synthesis_data.synthesis.consensus_areas.map((area, idx) => (
+                               <li key={idx} className="text-sm text-green-700 flex items-start">
+                                 <span className="text-green-500 mr-2">•</span>
+                                 {area}
+                               </li>
+                             ))}
+                           </ul>
+                         </div>
+                       )}
+
+                         {/* Contradicciones */}
+                         {interaction.synthesis_data.synthesis.contradictions?.length > 0 && (
+                           <div className="bg-amber-50 rounded-lg border border-amber-200 p-4">
+                             <h5 className="font-semibold text-amber-800 mb-3 flex items-center">
+                               <span className="w-2 h-2 bg-amber-500 rounded-full mr-2"></span>
+                               Contradicciones
+                             </h5>
+                             <ul className="space-y-2">
+                               {interaction.synthesis_data.synthesis.contradictions.map((contradiction, idx) => (
+                                 <li key={idx} className="text-sm text-amber-700 flex items-start">
+                                   <span className="text-amber-500 mr-2">•</span>
+                                   {contradiction}
+                                 </li>
+                               ))}
+                             </ul>
+                           </div>
+                         )}
+
+                         {/* Recomendaciones */}
+                         {interaction.synthesis_data.synthesis.recommendations?.length > 0 && (
+                           <div className="bg-blue-50 rounded-lg border border-blue-200 p-4">
+                             <h5 className="font-semibold text-blue-800 mb-3 flex items-center">
+                               <span className="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
+                               Recomendaciones
+                             </h5>
+                             <ul className="space-y-2">
+                               {interaction.synthesis_data.synthesis.recommendations.map((recommendation, idx) => (
+                                 <li key={idx} className="text-sm text-blue-700 flex items-start">
+                                   <span className="text-blue-500 mr-2">•</span>
+                                   {recommendation}
+                                 </li>
+                               ))}
+                             </ul>
+                           </div>
+                         )}
+
+                         {/* Preguntas sugeridas */}
+                         {interaction.synthesis_data?.synthesis?.suggested_questions?.length > 0 && (
+                           <div className="bg-purple-50 rounded-lg border border-purple-200 p-4">
+                             <h5 className="font-semibold text-purple-800 mb-3 flex items-center">
+                               <span className="w-2 h-2 bg-purple-500 rounded-full mr-2"></span>
+                               Preguntas Sugeridas
+                             </h5>
+                             <ul className="space-y-2">
+                               {interaction.synthesis_data.synthesis.suggested_questions.map((question, idx) => (
+                                 <li key={idx} className="text-sm text-purple-700 flex items-start">
+                                   <span className="text-purple-500 mr-2">?</span>
+                                   {question}
+                                 </li>
+                               ))}
+                             </ul>
+                           </div>
+                         )}
+
+                         {/* Conexiones */}
+                         {interaction.synthesis_data?.synthesis?.connections?.length > 0 && (
+                           <div className="bg-indigo-50 rounded-lg border border-indigo-200 p-4">
+                             <h5 className="font-semibold text-indigo-800 mb-3 flex items-center">
+                               <span className="w-2 h-2 bg-indigo-500 rounded-full mr-2"></span>
+                               Conexiones
+                             </h5>
+                             <ul className="space-y-2">
+                               {interaction.synthesis_data.synthesis.connections.map((connection, idx) => (
+                                 <li key={idx} className="text-sm text-indigo-700 flex items-start">
+                                   <span className="text-indigo-500 mr-2">↔</span>
+                                   {connection}
+                                 </li>
+                               ))}
+                             </ul>
+                           </div>
+                         )}
+
+                         {/* Áreas de investigación */}
+                         {interaction.synthesis_data?.synthesis?.research_areas?.length > 0 && (
+                           <div className="bg-gray-50 rounded-lg border border-gray-200 p-4">
+                             <h5 className="font-semibold text-gray-800 mb-3 flex items-center">
+                               <span className="w-2 h-2 bg-gray-500 rounded-full mr-2"></span>
+                               Áreas de Investigación
+                             </h5>
+                             <ul className="space-y-2">
+                               {interaction.synthesis_data.synthesis.research_areas.map((area, idx) => (
+                                 <li key={idx} className="text-sm text-gray-700 flex items-start">
+                                   <span className="text-gray-500 mr-2">🔬</span>
+                                   {area}
+                                 </li>
+                               ))}
+                             </ul>
+                           </div>
+                         )}
+                       </div>
+
+                     {/* Metadatos */}
+                     <div className="bg-gray-50 rounded-lg p-4 text-xs text-gray-600">
+                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                         <div>
+                           <span className="font-medium">Respuestas analizadas:</span>
+                           <br />
+                           {interaction.synthesis_data?.metadata?.responses_analyzed || 0}
+                         </div>
+                         <div>
+                           <span className="font-medium">Proveedores:</span>
+                           <br />
+                           {interaction.synthesis_data?.metadata?.providers_included?.join(', ') || 'N/A'}
+                         </div>
+                         <div>
+                           <span className="font-medium">Calidad de síntesis:</span>
+                           <br />
+                           {interaction.synthesis_data?.synthesis?.quality || 'N/A'}
+                         </div>
+                         <div>
+                           <span className="font-medium">Tiempo de síntesis:</span>
+                           <br />
+                           {interaction.synthesis_data?.metadata?.synthesis_time_ms || 0}ms
+                         </div>
+                         <div>
+                           <span className="font-medium">Fallback usado:</span>
+                           <br />
+                           {interaction.synthesis_data?.metadata?.fallback_used ? 'Sí' : 'No'}
+                         </div>
+                         <div>
+                           <span className="font-medium">Calidad meta-análisis:</span>
+                           <br />
+                           {interaction.synthesis_data?.metadata?.meta_analysis_quality || 'N/A'}
+                         </div>
+                       </div>
+                     </div>
+                   </div>
+                 ) : interaction.type === 'moderator_prompt_generated' ? (
+                   /* Renderizar prompt del moderador */
+                   <div className="space-y-4">
+                     <div className="text-center p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border border-purple-200">
+                       <h3 className="text-lg font-semibold text-purple-800 mb-2">📝 Prompt del Moderador Generado</h3>
+                       <p className="text-sm text-purple-700 mb-2">
+                         Prompt listo para síntesis de {interaction.prompt_data?.responses_count || 0} respuestas
+                       </p>
+                       <p className="text-xs text-purple-600 font-medium">
+                         Longitud: {interaction.prompt_data?.prompt_length || 0} caracteres
+                       </p>
+                       <p className="text-xs text-purple-600 italic mt-1">
+                         Proveedores incluidos: {interaction.prompt_data?.providers_included?.join(', ') || 'N/A'}
+                       </p>
+                     </div>
+
+                     {/* Vista previa del prompt */}
+                     <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                       <div className="flex items-center justify-between mb-3">
+                         <h4 className="font-medium text-gray-800">Vista Previa del Prompt</h4>
+                         <button
+                           onClick={() => setExpandedPrompts(prev => ({
+                             ...prev,
+                             [`moderator-${interaction.id}`]: !prev[`moderator-${interaction.id}`]
+                           }))}
+                           className="text-blue-600 hover:text-blue-800 text-sm flex items-center space-x-1"
+                         >
+                           {expandedPrompts[`moderator-${interaction.id}`] ? (
+                             <>
+                               <ChevronUpIcon className="w-4 h-4" />
+                               <span>Contraer</span>
+                             </>
+                           ) : (
+                             <>
+                               <ChevronDownIcon className="w-4 h-4" />
+                               <span>Ver Completo</span>
+                             </>
+                           )}
+                         </button>
+                       </div>
+                       
+                       <div className="text-sm text-gray-700 whitespace-pre-wrap font-mono bg-white p-3 rounded border">
+                         {expandedPrompts[`moderator-${interaction.id}`] 
+                           ? interaction.prompt_data?.moderator_prompt 
+                           : interaction.prompt_data?.prompt_preview
+                         }
+                       </div>
+                     </div>
+                   </div>
                  ) : null}
                </div>
              ))}
@@ -933,6 +1283,62 @@ const CenterColumn = ({ activeProject }) => {
                      <>
                        <BrainIcon className="w-5 h-5" />
                        <span>Consultar a las IAs</span>
+                     </>
+                   )}
+                 </button>
+               </div>
+             )}
+
+             {/* Botón "Mostrar Prompt del Moderador" - visible después de que las IAs hayan respondido */}
+             {conversationFlow.some(interaction => interaction.type === 'ai_responses') && 
+              !conversationFlow.some(interaction => interaction.type === 'moderator_prompt_generated') && (
+               <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4">
+                 <button
+                   onClick={handleGenerateModeratorPrompt}
+                   disabled={isGeneratingModeratorPrompt}
+                   className={`w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-lg font-medium transition-colors ${
+                     isGeneratingModeratorPrompt
+                       ? 'bg-gray-300 cursor-not-allowed'
+                       : 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white'
+                   }`}
+                 >
+                   {isGeneratingModeratorPrompt ? (
+                     <>
+                       <LoaderIcon className="w-5 h-5 animate-spin" />
+                       <span>Generando Prompt del Moderador...</span>
+                     </>
+                   ) : (
+                     <>
+                       <MessageSquareIcon className="w-5 h-5" />
+                       <span>Mostrar Prompt del Moderador</span>
+                     </>
+                   )}
+                 </button>
+               </div>
+             )}
+
+             {/* Botón "Analizar" - visible solo después de mostrar el prompt del moderador */}
+             {conversationFlow.some(interaction => interaction.type === 'moderator_prompt_generated') && 
+              !conversationFlow.some(interaction => interaction.type === 'synthesis_completed') && (
+               <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4">
+                 <button
+                   onClick={handleSynthesizeResponses}
+                   disabled={isSynthesizing}
+                   className={`w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-lg font-medium transition-colors ${
+                     isSynthesizing
+                       ? 'bg-gray-300 cursor-not-allowed'
+                       : 'bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white'
+                   }`}
+                 >
+                   {isSynthesizing ? (
+                     <>
+                       <LoaderIcon className="w-5 h-5 animate-spin" />
+                       <span>Analizando...</span>
+                     </>
+                   ) : (
+                     <>
+                       <MessageSquareIcon className="w-5 h-5" />
+                       <span>🔬 Analizar</span>
                      </>
                    )}
                  </button>

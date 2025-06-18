@@ -1,6 +1,6 @@
 # 📋 TAREAS ORQUIX-BACKEND
 
-## 🎉 HITO IMPORTANTE ALCANZADO - 18 DE JUNIO 2025
+## 🎉 HITOS IMPORTANTES ALCANZADOS - 18 DE JUNIO 2025
 
 ### ✨ **ETAPA 1 DEL FLUJO COMPLETADA EXITOSAMENTE**
 
@@ -11,13 +11,23 @@
 3. **✅ Interfaz Mejorada**: Formato legible con botones colapsar/expandir para una UX excelente
 4. **✅ Arquitectura Correcta**: Endpoint `/generate-ai-prompts` usando `query_service` + `prompt_templates.py`
 
-**📊 Impacto**: 
-- **Tiempo de desarrollo**: Menos de 2 horas para completar ambas tareas críticas
-- **Calidad del código**: Arquitectura limpia y mantenible
-- **Experiencia de usuario**: Dramáticamente mejorada con formato legible
-- **Base sólida**: Lista para implementar Etapa 2 (envío a IAs)
+### 🚀 **ETAPA 2 DEL FLUJO COMPLETADA EXITOSAMENTE**
 
-**🚀 Próximo Paso**: Implementar Etapa 2 - Envío real a las IAs usando los prompts generados
+**🎯 Logro Principal**: Se ha implementado exitosamente la **Etapa 2** - Consulta Individual a las IAs:
+
+1. **✅ Endpoint Específico**: `/context-sessions/{session_id}/query-ais` para consultas individuales
+2. **✅ Respuestas Separadas**: OpenAI y Anthropic con diseño diferenciado y tiempos de procesamiento
+3. **✅ Botón Condicional**: "Consultar a las IAs" visible solo después de generar prompts
+4. **✅ Sistema de Reintentos**: Botón "🔄 Reintentar" para IAs fallidas con endpoint `/retry-ai/{provider}`
+5. **✅ UX Robusta**: Estados de carga, manejo de errores, y actualización automática de respuestas
+
+**📊 Impacto Etapa 2**: 
+- **Tiempo de desarrollo**: 90 minutos para implementar flujo completo
+- **Funcionalidad robusta**: Manejo inteligente de fallos y reintentos automáticos
+- **Experiencia excepcional**: Respuestas individuales con diseño diferenciado por proveedor
+- **Arquitectura escalable**: Fácil agregar nuevos proveedores de IA
+
+**🎉 Estado Actual**: **FLUJO COMPLETO FUNCIONAL** - Ambas etapas operativas y testeadas exitosamente
 
 ---
 
@@ -34,6 +44,21 @@
 - ✅ **CORREGIDO**: Usar endpoint correcto `/generate-ai-prompts` con `prompt_templates.py`
 - ✅ **CORREGIDO**: Renderizar prompts elaborados en lugar de fallbacks simples
 **Tiempo estimado**: 45 minutos
+**Estado**: 🟢 Completada
+
+### 1.1. ✅ [Feature] Implementar Etapa 2: Consulta Individual a IAs
+**Archivos**: 
+- `backend/app/api/v1/endpoints/context_chat.py` (nuevo endpoint `/query-ais`)
+- `frontend/src/components/layout/CenterColumn.jsx` (botón condicional + renderizado)
+**Objetivo**: Consultar IAs individualmente con sistema de reintentos
+**Cambios**:
+- ✅ Endpoint específico `/context-sessions/{session_id}/query-ais` 
+- ✅ Endpoint de reintento `/context-sessions/{session_id}/retry-ai/{provider}`
+- ✅ Botón "Consultar a las IAs" visible solo después de generar prompts
+- ✅ Respuestas individuales con diseño diferenciado (OpenAI verde, Anthropic naranja)
+- ✅ Botón "🔄 Reintentar" en respuestas fallidas
+- ✅ Estados de carga y manejo robusto de errores
+**Tiempo estimado**: 90 minutos
 **Estado**: 🟢 Completada
 
 ### 2. ❌ [Bug] Missing add_info Method in MetricsCollector  
@@ -189,8 +214,20 @@
 
 ## 📈 PROGRESO ACTUAL
 
-**Critical Refactor**: 2/4 ✅  
+**Critical Refactor**: 3/4 ✅ (75% completado)  
 **Sprint 1**: 0/5 ✅  
 **Sprint 2**: 0/5 ✅  
 
-**Total**: 2/14 tareas completadas (14%)
+**Total**: 3/15 tareas completadas (20%)
+
+### 🎯 Archivos Relevantes Actualizados
+
+#### ✅ Completados
+- `backend/app/api/v1/endpoints/context_chat.py` - Endpoints de generación de prompts, consulta individual y reintentos
+- `frontend/src/components/layout/CenterColumn.jsx` - Flujo completo de 2 etapas con sistema de reintentos
+- `frontend/src/components/ui/ContextBuildingFlow.jsx` - Construcción de contexto (sin cambios, funcionando)
+
+#### 🔄 Arquitectura Implementada
+- **Etapa 1**: Context Building → Prompt Generation (usando `query_service` + `prompt_templates.py`)
+- **Etapa 2**: Individual AI Queries → Retry System (usando `ai_orchestrator`)
+- **UX Flow**: Botones condicionales → Estados de carga → Respuestas diferenciadas → Reintentos automáticos

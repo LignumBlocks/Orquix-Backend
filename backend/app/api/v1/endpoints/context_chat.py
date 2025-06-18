@@ -571,6 +571,25 @@ Por favor, proporciona una respuesta detallada basada en el contexto proporciona
         total_time = time.time() - start_time
         successful_responses = [r for r in individual_responses if r.get("success", False)]
         
+        # Guardar las respuestas en la base de datos para uso posterior del moderador
+        try:
+            import json
+            ai_responses_data = {
+                "responses": individual_responses,
+                "user_question": request.final_question,
+                "timestamp": datetime.utcnow().isoformat(),
+                "total_processing_time_ms": int(total_time * 1000)
+            }
+            
+            # Actualizar la sesión con las respuestas de IAs
+            session.ai_responses_json = json.dumps(ai_responses_data)
+            await db.commit()
+            logger.info(f"💾 Respuestas guardadas en BD para sesión: {session_id}")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Error guardando respuestas en BD: {e}")
+            # No fallar el endpoint por esto, solo registrar el warning
+        
         logger.info(f"✅ Consulta individual completada - {len(successful_responses)}/{len(individual_responses)} exitosas en {total_time:.2f}s")
         
         return {
@@ -718,4 +737,255 @@ Por favor, proporciona una respuesta detallada basada en el contexto proporciona
         raise HTTPException(
             status_code=500,
             detail=f"Error interno reintentando {provider}: {str(e)}"
+        )
+
+
+@router.post("/context-sessions/{session_id}/generate-moderator-prompt")
+async def generate_moderator_prompt(
+    session_id: UUID,
+    request: ContextFinalizeRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Genera y muestra el prompt que se enviará al moderador para la síntesis,
+    sin ejecutar la síntesis real.
+    """
+    try:
+        logger.info(f"📝 Generando prompt del moderador - Sesión: {session_id}")
+        
+        # Verificar sesión
+        db_session = await context_crud.get_context_session(db, session_id)
+        if not db_session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sesión no encontrada"
+            )
+        
+        # Verificar que hay respuestas de IAs disponibles
+        if not hasattr(db_session, 'ai_responses_json') or not db_session.ai_responses_json:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No hay respuestas de IAs disponibles para generar el prompt del moderador"
+            )
+        
+        # Parsear las respuestas de IAs desde JSON
+        import json
+        ai_responses_data = json.loads(db_session.ai_responses_json)
+        
+        # Manejar diferentes formatos de datos (puede ser lista o diccionario)
+        if isinstance(ai_responses_data, list):
+            responses_list = ai_responses_data
+        elif isinstance(ai_responses_data, dict):
+            responses_list = ai_responses_data.get('responses', [])
+        else:
+            responses_list = []
+        
+        # Verificar que hay respuestas exitosas
+        successful_responses = [
+            resp for resp in responses_list
+            if resp.get('success', False) and resp.get('content')
+        ]
+        
+        if not successful_responses:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No hay respuestas exitosas de IAs para generar el prompt del moderador"
+            )
+        
+        # Crear objetos StandardAIResponse simulados para generar el prompt
+        from app.schemas.ai_response import StandardAIResponse, AIResponseStatus, AIProviderEnum
+        
+        # DEBUG: Agregar logging para ver los datos
+        logger.info(f"🔍 DEBUG - ai_responses_data type: {type(ai_responses_data)}")
+        logger.info(f"🔍 DEBUG - responses_list length: {len(responses_list)}")
+        logger.info(f"🔍 DEBUG - successful_responses length: {len(successful_responses)}")
+        
+        mock_responses = []
+        for i, resp_data in enumerate(successful_responses):
+            logger.info(f"🔍 DEBUG - Response {i}: {resp_data}")
+            
+            provider_name = resp_data.get('provider', 'unknown').lower()
+            provider_enum = AIProviderEnum.OPENAI if provider_name == 'openai' else AIProviderEnum.ANTHROPIC
+            
+            # DEBUG: Verificar campos específicos
+            content = resp_data.get('content', '')
+            processing_time = resp_data.get('processing_time_ms', 0)
+            logger.info(f"🔍 DEBUG - content type: {type(content)}, processing_time type: {type(processing_time)}, value: {processing_time}")
+            
+            mock_response = StandardAIResponse(
+                response_text=content,
+                status=AIResponseStatus.SUCCESS,
+                ia_provider_name=provider_enum,
+                latency_ms=processing_time,
+                error_message=None,
+                timestamp=datetime.utcnow()
+            )
+            mock_responses.append(mock_response)
+        
+        # Crear instancia del moderador solo para generar el prompt
+        from app.services.ai_moderator import AIModerator
+        moderator = AIModerator()
+        
+        # Generar el prompt usando el método interno
+        moderator_prompt = moderator._create_synthesis_prompt(mock_responses)
+        
+        if not moderator_prompt:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="No se pudo generar el prompt del moderador"
+            )
+        
+        # Preparar metadatos
+        response_data = {
+            "session_id": str(session_id),
+            "moderator_prompt": moderator_prompt,
+            "prompt_length": len(moderator_prompt),
+            "responses_count": len(successful_responses),
+            "providers_included": [resp.get('provider', 'unknown') for resp in successful_responses],
+            "generated_at": datetime.utcnow().isoformat(),
+            "prompt_preview": moderator_prompt[:200] + "..." if len(moderator_prompt) > 200 else moderator_prompt
+        }
+        
+        logger.info(f"✅ Prompt del moderador generado - Longitud: {len(moderator_prompt)} caracteres")
+        
+        return response_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error generando prompt del moderador: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generando prompt del moderador: {str(e)}"
+        )
+
+
+@router.post("/context-sessions/{session_id}/synthesize")
+async def synthesize_ai_responses(
+    session_id: UUID,
+    request: ContextFinalizeRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Ejecuta la síntesis del moderador usando las respuestas de las IAs guardadas.
+    """
+    try:
+        logger.info(f"🔬 Ejecutando síntesis del moderador - Sesión: {session_id}")
+        
+        # Verificar sesión
+        db_session = await context_crud.get_context_session(db, session_id)
+        if not db_session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sesión no encontrada"
+            )
+        
+        # Verificar que hay respuestas de IAs disponibles
+        if not hasattr(db_session, 'ai_responses_json') or not db_session.ai_responses_json:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No hay respuestas de IAs disponibles para sintetizar"
+            )
+        
+        # Parsear las respuestas de IAs desde JSON
+        import json
+        ai_responses_data = json.loads(db_session.ai_responses_json)
+        
+        # Manejar diferentes formatos de datos (puede ser lista o diccionario)
+        if isinstance(ai_responses_data, list):
+            responses_list = ai_responses_data
+        elif isinstance(ai_responses_data, dict):
+            responses_list = ai_responses_data.get('responses', [])
+        else:
+            responses_list = []
+        
+        # Verificar que hay respuestas exitosas
+        successful_responses = [
+            resp for resp in responses_list
+            if resp.get('success', False) and resp.get('content')
+        ]
+        
+        if not successful_responses:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No hay respuestas exitosas de IAs para sintetizar"
+            )
+        
+        # Crear objetos StandardAIResponse para la síntesis
+        from app.schemas.ai_response import StandardAIResponse, AIResponseStatus, AIProviderEnum
+        
+        mock_responses = []
+        for resp_data in successful_responses:
+            provider_name = resp_data.get('provider', 'unknown').lower()
+            provider_enum = AIProviderEnum.OPENAI if provider_name == 'openai' else AIProviderEnum.ANTHROPIC
+            
+            content = resp_data.get('content', '')
+            processing_time = resp_data.get('processing_time_ms', 0)
+            
+            mock_response = StandardAIResponse(
+                response_text=content,
+                status=AIResponseStatus.SUCCESS,
+                ia_provider_name=provider_enum,
+                latency_ms=processing_time,
+                error_message=None,
+                timestamp=datetime.utcnow()
+            )
+            mock_responses.append(mock_response)
+        
+        # Ejecutar síntesis del moderador
+        from app.services.ai_moderator import AIModerator
+        moderator = AIModerator()
+        
+        import time
+        start_time = time.time()
+        synthesis_result = await moderator.synthesize_responses(mock_responses)
+        synthesis_time = time.time() - start_time
+        
+        if not synthesis_result or not synthesis_result.synthesis_text:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="No se pudo generar la síntesis del moderador"
+            )
+        
+        # Preparar respuesta estructurada
+        response_data = {
+            "session_id": str(session_id),
+            "synthesis": {
+                "text": synthesis_result.synthesis_text,
+                "quality": synthesis_result.quality.value if synthesis_result.quality else "unknown",
+                "key_themes": synthesis_result.key_themes,
+                "consensus_areas": synthesis_result.consensus_areas,
+                "contradictions": synthesis_result.contradictions,
+                "recommendations": synthesis_result.recommendations,
+                "suggested_questions": synthesis_result.suggested_questions,
+                "research_areas": synthesis_result.research_areas,
+                "connections": synthesis_result.connections,
+                "source_references": synthesis_result.source_references
+            },
+            "metadata": {
+                "responses_analyzed": len(successful_responses),
+                "providers_included": [resp.get('provider', 'unknown') for resp in successful_responses],
+                "synthesis_time_ms": int(synthesis_time * 1000),
+                "processing_time_ms": synthesis_result.processing_time_ms,
+                "original_responses_count": synthesis_result.original_responses_count,
+                "successful_responses_count": synthesis_result.successful_responses_count,
+                "fallback_used": synthesis_result.fallback_used,
+                "meta_analysis_quality": synthesis_result.meta_analysis_quality,
+                "generated_at": datetime.utcnow().isoformat()
+            }
+        }
+        
+        logger.info(f"✅ Síntesis completada - {len(successful_responses)} respuestas analizadas en {synthesis_time:.2f}s")
+        
+        return response_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error ejecutando síntesis: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error ejecutando síntesis: {str(e)}"
         ) 
