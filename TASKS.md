@@ -103,7 +103,26 @@
 
 ## 🚀 SPRINT 2: New Features (2-3 semanas)
 
-### 9. 🔗 [Feature] Continuity Indicators
+### 9. 🔄 [Feature] Persistencia y Continuidad de Sesiones
+**Archivos**: 
+- `backend/app/models/context_session.py` (usar existente)
+- `backend/app/models/conversation_history.py` (usar existente)  
+- `backend/app/models/interaction_events.py` (usar existente)
+- `backend/app/api/v1/endpoints/context_chat.py` (nuevos endpoints)
+- `frontend/src/components/ui/SessionSelector.jsx` (nuevo)
+**Descripción**: 
+- Permitir volver a sesiones anteriores y continuar conversación
+- Guardar historial completo en `conversation_history` y `interaction_events`
+- UI para listar y seleccionar sesiones del proyecto
+- Restaurar estado completo de sesión (contexto + historial + prompts)
+**Endpoints nuevos**:
+- `GET /projects/{id}/sessions` - Listar sesiones del proyecto
+- `GET /context-sessions/{id}/full-state` - Estado completo de sesión
+- `POST /context-sessions/{id}/continue` - Continuar sesión existente
+**Tiempo estimado**: 90 minutos (feature compleja)
+**Estado**: ⏳ Planificado
+
+### 10. 🔗 [Feature] Continuity Indicators  
 **Archivos**: 
 - `frontend/src/components/ui/ContinuityIndicator.jsx`
 - `backend/app/api/v1/endpoints/projects.py`
@@ -111,7 +130,7 @@
 **Tiempo estimado**: 45 minutos
 **Estado**: ⏳ Planificado
 
-### 10. 🧠 [Feature] PreAnalyst Frontend Integration
+### 11. 🧠 [Feature] PreAnalyst Frontend Integration
 **Archivos**: 
 - `frontend/src/components/ui/PreAnalystDisplay.jsx`
 - `frontend/src/services/api.js`
@@ -119,7 +138,7 @@
 **Tiempo estimado**: 45 minutos
 **Estado**: ⏳ Planificado
 
-### 11. 💾 [Feature] Conversation Export
+### 12. 💾 [Feature] Conversation Export
 **Archivos**: 
 - `frontend/src/components/ui/ConversationExport.jsx`
 - `backend/app/api/v1/endpoints/interactions.py`
@@ -127,7 +146,7 @@
 **Tiempo estimado**: 45 minutos
 **Estado**: ⏳ Planificado
 
-### 12. 🔍 [Feature] Advanced Search
+### 13. 🔍 [Feature] Advanced Search
 **Archivos**: 
 - `frontend/src/components/ui/SearchDialog.jsx`
 - `backend/app/services/embeddings.py`
@@ -172,6 +191,6 @@
 
 **Critical Refactor**: 2/4 ✅  
 **Sprint 1**: 0/5 ✅  
-**Sprint 2**: 0/4 ✅  
+**Sprint 2**: 0/5 ✅  
 
-**Total**: 2/13 tareas completadas (15%)
+**Total**: 2/14 tareas completadas (14%)

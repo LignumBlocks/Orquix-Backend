@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { MicIcon, SendIcon, LoaderIcon, AlertCircleIcon, MessageSquareIcon, BrainIcon, SparklesIcon, ArrowRightIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
+import { MicIcon, SendIcon, LoaderIcon, AlertCircleIcon, MessageSquareIcon, BrainIcon, SparklesIcon, ArrowRightIcon, ChevronDownIcon, ChevronUpIcon, CheckIcon } from 'lucide-react'
 import useAppStore from '../../store/useAppStore'
 import ConversationFlow from '../ui/ConversationFlow'
 import AIResponseCard from '../ui/AIResponseCard'
@@ -17,6 +17,8 @@ const CenterColumn = ({ activeProject }) => {
   const [isProcessing, setIsProcessing] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [expandedPrompts, setExpandedPrompts] = useState({})
+  const [isQueryingAIs, setIsQueryingAIs] = useState(false)
+  const [retryingProviders, setRetryingProviders] = useState({}) // Track which providers are being retried
   const chatContainerRef = useRef(null)
 
   const {
@@ -209,6 +211,130 @@ const CenterColumn = ({ activeProject }) => {
       setError(error.message || 'Error al generar prompts para las IAs')
     } finally {
       setIsSendingToAIs(false)
+    }
+  }
+
+  const handleQueryAIs = async () => {
+    if (!contextSession?.session_id || !activeProject?.id) {
+      setError('No hay sesión de contexto o proyecto activo')
+      return
+    }
+
+    setIsQueryingAIs(true)
+    setError(null)
+
+    try {
+      // Obtener la pregunta de la última interacción de prompts generados
+      const promptsInteraction = conversationFlow.find(interaction => interaction.type === 'prompts_generated')
+      const userQuestion = promptsInteraction?.user_question || "¿Qué recomendaciones me puedes dar basándote en este contexto?"
+
+      console.log('🤖 Consultando IAs individualmente:', userQuestion)
+
+      // Consultar las IAs usando el nuevo endpoint específico
+      const queryResponse = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSession.session_id}/query-ais`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer dev-mock-token-12345'
+        },
+        body: JSON.stringify({
+          session_id: contextSession.session_id,
+          final_question: userQuestion
+        })
+      })
+
+      if (!queryResponse.ok) {
+        throw new Error(`Error al consultar IAs: ${queryResponse.status}`)
+      }
+
+      const queryData = await queryResponse.json()
+      console.log('🤖 Respuestas individuales recibidas:', queryData)
+
+      // Agregar las respuestas individuales al flujo conversacional
+      const aiResponsesInteraction = {
+        id: Date.now() + 2,
+        type: 'ai_responses',
+        user_question: queryData.user_question,
+        individual_responses: queryData.individual_responses || [],
+        total_processing_time_ms: queryData.total_processing_time_ms,
+        successful_responses: queryData.successful_responses,
+        total_responses: queryData.total_responses,
+        context_used: queryData.context_used,
+        timestamp: new Date()
+      }
+
+      setConversationFlow(prev => [...prev, aiResponsesInteraction])
+
+    } catch (error) {
+      console.error('Error al consultar IAs:', error)
+      setError(error.message || 'Error al consultar las IAs')
+    } finally {
+      setIsQueryingAIs(false)
+    }
+  }
+
+  const handleRetryAI = async (provider) => {
+    if (!contextSession?.session_id) {
+      setError('No hay sesión de contexto activa')
+      return
+    }
+
+    setRetryingProviders(prev => ({ ...prev, [provider]: true }))
+    setError(null)
+
+    try {
+      // Obtener la última interacción para conseguir la pregunta sugerida
+      const lastInteraction = conversationFlow[conversationFlow.length - 1]
+      const suggestedQuestion = lastInteraction?.suggested_final_question || "¿Qué recomendaciones me puedes dar basándote en este contexto?"
+
+      console.log(`🔄 Reintentando ${provider.toUpperCase()}:`, suggestedQuestion)
+
+      const retryResponse = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSession.session_id}/retry-ai/${provider}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          final_question: suggestedQuestion
+        })
+      })
+
+      if (!retryResponse.ok) {
+        throw new Error(`Error ${retryResponse.status}: ${retryResponse.statusText}`)
+      }
+
+      const retryData = await retryResponse.json()
+      console.log(`✅ Reintento de ${provider.toUpperCase()} completado:`, retryData)
+
+      // Actualizar la interacción existente con la nueva respuesta
+      setConversationFlow(prevFlow => {
+        const newFlow = [...prevFlow]
+        const aiResponseIndex = newFlow.findIndex(interaction => interaction.type === 'ai_responses')
+        
+        if (aiResponseIndex !== -1) {
+          const updatedResponses = [...newFlow[aiResponseIndex].ai_responses]
+          const providerIndex = updatedResponses.findIndex(response => response.provider === provider)
+          
+          if (providerIndex !== -1) {
+            updatedResponses[providerIndex] = retryData.response
+          }
+          
+          newFlow[aiResponseIndex] = {
+            ...newFlow[aiResponseIndex],
+            ai_responses: updatedResponses
+          }
+        }
+        
+        return newFlow
+      })
+
+      console.log(`🎉 ${provider.toUpperCase()} reintentado exitosamente`)
+
+    } catch (error) {
+      console.error(`❌ Error reintentando ${provider.toUpperCase()}:`, error)
+      setError(`Error reintentando ${provider.toUpperCase()}: ${error.message}`)
+    } finally {
+      setRetryingProviders(prev => ({ ...prev, [provider]: false }))
     }
   }
 
@@ -665,11 +791,100 @@ const CenterColumn = ({ activeProject }) => {
                        </div>
                      )}
                    </div>
+                 ) : interaction.type === 'ai_responses' ? (
+                   /* Renderizar respuestas individuales de las IAs */
+                   <div className="space-y-4">
+                     <div className="text-center p-4 bg-gradient-to-r from-blue-50 to-green-50 rounded-lg border border-blue-200">
+                       <h3 className="text-lg font-semibold text-blue-800 mb-2">🤖 Respuestas de las IAs</h3>
+                       <p className="text-sm text-blue-700 mb-2">
+                         {interaction.successful_responses}/{interaction.total_responses} IAs respondieron exitosamente
+                       </p>
+                       <p className="text-xs text-blue-600 font-medium">
+                         Tiempo total: {interaction.total_processing_time_ms}ms
+                       </p>
+                       <p className="text-xs text-blue-600 italic mt-1">
+                         "{interaction.user_question}"
+                       </p>
+                     </div>
+
+                     {/* Respuestas Individuales */}
+                     <div className="space-y-4">
+                       {interaction.individual_responses.map((response, idx) => {
+                         const isOpenAI = response.provider === 'openai'
+                         const isAnthropic = response.provider === 'anthropic'
+                         const bgColor = isOpenAI ? 'bg-green-50 border-green-200' : 
+                                        isAnthropic ? 'bg-orange-50 border-orange-200' : 
+                                        'bg-gray-50 border-gray-200'
+                         const textColor = isOpenAI ? 'text-green-800' : 
+                                          isAnthropic ? 'text-orange-800' : 
+                                          'text-gray-800'
+                         const dotColor = isOpenAI ? 'bg-green-500' : 
+                                         isAnthropic ? 'bg-orange-500' : 
+                                         'bg-gray-500'
+                         
+                         return (
+                           <div key={idx} className={`${bgColor} border rounded-lg p-4`}>
+                             <div className="flex items-center justify-between mb-3">
+                               <div className="flex items-center space-x-2">
+                                 <div className={`w-3 h-3 ${dotColor} rounded-full`}></div>
+                                 <span className={`font-medium ${textColor}`}>
+                                   {response.provider?.toUpperCase()} {response.model && `(${response.model})`}
+                                 </span>
+                               </div>
+                               <div className="flex items-center space-x-2 text-xs">
+                                 {response.success ? (
+                                   <span className="text-green-600 flex items-center">
+                                     <CheckIcon className="w-3 h-3 mr-1" />
+                                     {response.processing_time_ms}ms
+                                   </span>
+                                 ) : (
+                                   <span className="text-red-600 flex items-center">
+                                     <AlertCircleIcon className="w-3 h-3 mr-1" />
+                                     Error
+                                   </span>
+                                 )}
+                               </div>
+                             </div>
+                             
+                             {response.success ? (
+                               <div className={`text-sm whitespace-pre-wrap ${textColor} leading-relaxed`}>
+                                 {response.content}
+                               </div>
+                             ) : (
+                               <div className="space-y-3">
+                                 <div className="text-red-600 text-sm">
+                                   ⚠️ {response.error}
+                                 </div>
+                                 <button
+                                   onClick={() => handleRetryAI(response.provider)}
+                                   disabled={retryingProviders[response.provider]}
+                                   className={`px-3 py-1.5 text-xs rounded-md font-medium transition-colors ${
+                                     retryingProviders[response.provider]
+                                       ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                                       : 'bg-blue-500 hover:bg-blue-600 text-white'
+                                   }`}
+                                 >
+                                   {retryingProviders[response.provider] ? (
+                                     <>
+                                       <LoaderIcon className="w-3 h-3 animate-spin inline mr-1" />
+                                       Reintentando...
+                                     </>
+                                   ) : (
+                                     '🔄 Reintentar'
+                                   )}
+                                 </button>
+                               </div>
+                             )}
+                           </div>
+                         )
+                       })}
+                     </div>
+                   </div>
                  ) : null}
                </div>
              ))}
              
-             {/* Botón "Generar Prompts" - siempre visible si hay contexto */}
+             {/* Botón "Generar Prompts" - visible si hay contexto y no se han generado prompts */}
              {conversationFlow.length > 0 && !conversationFlow.some(interaction => interaction.type === 'prompts_generated') && (
                <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4">
                  <button
@@ -690,6 +905,34 @@ const CenterColumn = ({ activeProject }) => {
                      <>
                        <SparklesIcon className="w-5 h-5" />
                        <span>Generar Prompts para las IAs</span>
+                     </>
+                   )}
+                 </button>
+               </div>
+             )}
+
+             {/* Botón "Consultar a las IAs" - visible solo después de generar prompts y antes de consultar */}
+             {conversationFlow.some(interaction => interaction.type === 'prompts_generated') && 
+              !conversationFlow.some(interaction => interaction.type === 'ai_responses') && (
+               <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4">
+                 <button
+                   onClick={handleQueryAIs}
+                   disabled={isQueryingAIs}
+                   className={`w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-lg font-medium transition-colors ${
+                     isQueryingAIs
+                       ? 'bg-gray-300 cursor-not-allowed'
+                       : 'bg-gradient-to-r from-green-500 to-blue-500 hover:from-green-600 hover:to-blue-600 text-white'
+                   }`}
+                 >
+                   {isQueryingAIs ? (
+                     <>
+                       <LoaderIcon className="w-5 h-5 animate-spin" />
+                       <span>Consultando IAs...</span>
+                     </>
+                   ) : (
+                     <>
+                       <BrainIcon className="w-5 h-5" />
+                       <span>Consultar a las IAs</span>
                      </>
                    )}
                  </button>
@@ -731,21 +974,21 @@ const CenterColumn = ({ activeProject }) => {
                   e.target.style.height = 'auto'
                   e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'
                 }}
-                disabled={isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs}
+                disabled={isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs}
               />
             </div>
             
             <button
               type="button"
               onClick={handleButtonClick}
-              disabled={!message.trim() || isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs}
+              disabled={!message.trim() || isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs}
               className={`px-4 py-2 rounded-lg flex items-center justify-center min-w-[44px] h-[44px] ${
-                !message.trim() || isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs
+                !message.trim() || isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs
                   ? 'bg-gray-300 cursor-not-allowed'
                   : 'bg-blue-500 hover:bg-blue-600'
               } text-white transition-colors`}
             >
-              {isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs ? (
+              {isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs ? (
                 <LoaderIcon className="w-5 h-5 animate-spin" />
               ) : (
                 <SendIcon className="w-5 h-5" />
@@ -755,7 +998,7 @@ const CenterColumn = ({ activeProject }) => {
           
           <div className="mt-2 text-xs text-gray-500 flex items-center justify-between">
             <span>Presiona Enter para enviar, Shift+Enter para nueva línea</span>
-            {(isQuerying || isContextBuilding || isProcessing || isSendingToAIs) && (
+            {(isQuerying || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs) && (
               <span className="text-blue-600 flex items-center">
                 <LoaderIcon className="w-3 h-3 animate-spin mr-1" />
                 Procesando...
