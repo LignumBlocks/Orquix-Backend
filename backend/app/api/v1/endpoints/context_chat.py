@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -196,8 +196,9 @@ async def get_context_session(
                 detail="Sesión de contexto no encontrada"
             )
         
-        session = context_crud.convert_interaction_to_context_session(db_session)
-        return session
+        # Convertir a modelo Pydantic para acceder a los campos correctamente
+        session_model = context_crud.convert_interaction_to_context_session(db_session)
+        return session_model
         
     except HTTPException:
         raise
@@ -308,4 +309,133 @@ async def get_active_context_session(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error obteniendo sesión activa: {str(e)}"
+        )
+
+
+@router.post("/context-sessions/{session_id}/generate-ai-prompts")
+async def generate_ai_prompts(
+    session_id: UUID,
+    request: ContextFinalizeRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Genera los prompts reales usando el servicio ai_moderator.py con meta-análisis profesional.
+    """
+    logger.info(f"🎯 Generando prompts para IAs usando ai_moderator.py - Sesión: {session_id}")
+    
+    try:
+        # Verificar que la sesión existe y pertenece al usuario
+        session = await context_crud.get_context_session(db, session_id)
+        if not session:
+            raise HTTPException(
+                status_code=404,
+                detail="Sesión de contexto no encontrada"
+            )
+        
+        user_id = UUID(current_user.id)  # Convertir string a UUID
+        if session.user_id != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso para acceder a esta sesión"
+            )
+        
+        # Convertir a modelo Pydantic para acceder a los campos correctamente
+        session_model = context_crud.convert_interaction_to_context_session(session)
+        
+        # Importar el servicio ai_moderator
+        from app.services.ai_moderator import AIModerator
+        from app.schemas.ai_response import AIRequest, StandardAIResponse, AIResponseStatus, AIProviderEnum
+        from app.core.config import settings
+        
+        # Crear instancia del moderador para acceder a sus prompts profesionales
+        moderator = AIModerator()
+        
+        # Crear respuestas simuladas para usar el sistema de prompts del moderador
+        # Esto nos permite acceder a los prompts profesionales sin tener que duplicarlos
+        mock_responses = []
+        
+        if settings.OPENAI_API_KEY:
+            mock_responses.append(StandardAIResponse(
+                ia_provider_name=AIProviderEnum.OPENAI,
+                response_text=f"Análisis basado en: {session_model.accumulated_context}. Pregunta: {request.final_question}",
+                status=AIResponseStatus.SUCCESS,
+                latency_ms=100,
+                token_usage={"prompt_tokens": 100, "completion_tokens": 200, "total_tokens": 300},
+                request_timestamp=datetime.utcnow(),
+                response_timestamp=datetime.utcnow()
+            ))
+        
+        if settings.ANTHROPIC_API_KEY:
+            mock_responses.append(StandardAIResponse(
+                ia_provider_name=AIProviderEnum.ANTHROPIC,
+                response_text=f"Perspectiva alternativa sobre: {session_model.accumulated_context}. Enfoque: {request.final_question}",
+                status=AIResponseStatus.SUCCESS,
+                latency_ms=120,
+                token_usage={"prompt_tokens": 110, "completion_tokens": 180, "total_tokens": 290},
+                request_timestamp=datetime.utcnow(),
+                response_timestamp=datetime.utcnow()
+            ))
+        
+        if not mock_responses:
+            raise HTTPException(
+                status_code=500,
+                detail="No hay adaptadores de IA configurados"
+            )
+        
+        # Usar el método _create_synthesis_prompt del moderador para generar el prompt profesional
+        synthesis_prompt = moderator._create_synthesis_prompt(mock_responses)
+        
+        if not synthesis_prompt:
+            raise HTTPException(
+                status_code=500,
+                detail="Error generando prompt de síntesis profesional"
+            )
+        
+        # Extraer el system message del moderador
+        moderator_system_message = "Eres un asistente de meta-análisis objetivo, analítico y altamente meticuloso. Tu tarea principal es procesar un conjunto de respuestas de múltiples modelos de IA diversos a una consulta específica del investigador. Tu objetivo es generar un reporte estructurado, claro y altamente accionable que ayude al investigador a comprender las perspectivas diversas, identificar puntos de consenso y contradicciones, y definir pasos lógicos y accionables para su investigación."
+        
+        # Generar los prompts profesionales para cada IA
+        ai_prompts = {}
+        
+        # Prompt para OpenAI usando el sistema del moderador
+        if settings.OPENAI_API_KEY:
+            ai_prompts["openai"] = {
+                "provider": "OpenAI GPT-4",
+                "model": "gpt-4",
+                "system_message": moderator_system_message,
+                "user_prompt": synthesis_prompt,
+                "parameters": {
+                    "max_tokens": 1200,
+                    "temperature": 0.3
+                }
+            }
+        
+        # Prompt para Anthropic usando el sistema del moderador
+        if settings.ANTHROPIC_API_KEY:
+            ai_prompts["anthropic"] = {
+                "provider": "Anthropic Claude",
+                "model": "claude-3-opus-20240229", 
+                "system_message": moderator_system_message,
+                "user_prompt": synthesis_prompt,
+                "parameters": {
+                    "max_tokens": 1200,
+                    "temperature": 0.3
+                }
+            }
+        
+        logger.info(f"✅ Prompts profesionales generados usando ai_moderator.py para {len(ai_prompts)} proveedores")
+        
+        return {
+            "session_id": session_id,
+            "ai_prompts": ai_prompts,
+            "prompt_type": "ai_moderator_professional",
+            "meta_analysis_version": "v2.0"
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error generando prompts profesionales: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generando prompts profesionales: {str(e)}"
         ) 

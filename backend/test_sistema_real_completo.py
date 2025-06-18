@@ -143,13 +143,25 @@ class SistemaContextoCompleto:
         # Mostrar request
         self.mostrar_detalles_request(request_data)
         
-        # Enviar request
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{API_BASE}/context-chat/projects/{self.project_id}/context-chat",
-                json=request_data,
-                headers=self.headers
-            )
+        # Enviar request con timeout extendido
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                response = await client.post(
+                    f"{API_BASE}/context-chat/projects/{self.project_id}/context-chat",
+                    json=request_data,
+                    headers=self.headers
+                )
+            except httpx.ReadTimeout:
+                self.log_and_print(f"⏱️ TIMEOUT en el mensaje {paso} - El backend tardó más de 60 segundos", style="yellow")
+                self.log_and_print("🔄 Reintentando con timeout más largo...", style="yellow")
+                
+                # Reintentar con timeout aún más largo
+                async with httpx.AsyncClient(timeout=120.0) as retry_client:
+                    response = await retry_client.post(
+                        f"{API_BASE}/context-chat/projects/{self.project_id}/context-chat",
+                        json=request_data,
+                        headers=self.headers
+                    )
             
             if response.status_code == 200:
                 response_data = response.json()
@@ -390,7 +402,109 @@ Proporciona una respuesta detallada y específica."""
         )
         console.print(panel_openai)
         
-        # Prompt para Anthropic (simulado)
-        anthropic_prompt = f"""Human: {resultado_finalizacion['accumulated_context']}
+        # USAR EL SERVICIO REAL DE AI MODERATOR
+        await self.mostrar_prompt_real_ai_moderator(resultado_finalizacion)
+    
+    async def mostrar_prompt_real_ai_moderator(self, resultado_finalizacion):
+        """Muestra el prompt real que usa el AI Moderator para síntesis."""
+        self.log_and_print("\n🤖 PROMPT REAL DEL AI MODERATOR", style="bold red")
+        
+        try:
+            # Importar y crear instancia del AI Moderator
+            from app.services.ai_moderator import AIModerator
+            moderator = AIModerator()
+            
+            # Crear respuestas mock para demostración
+            from app.schemas.ai_response import StandardAIResponse, AIResponseStatus, AIProviderEnum
+            
+            mock_responses = [
+                StandardAIResponse(
+                    response_text="Ejemplo de respuesta de OpenAI para el contexto acumulado",
+                    status=AIResponseStatus.SUCCESS,
+                    ia_provider_name=AIProviderEnum.OPENAI,
+                    response_time_ms=1200,
+                    tokens_used=150
+                ),
+                StandardAIResponse(
+                    response_text="Ejemplo de respuesta de Anthropic para el contexto acumulado",
+                    status=AIResponseStatus.SUCCESS,
+                    ia_provider_name=AIProviderEnum.ANTHROPIC,
+                    response_time_ms=1100,
+                    tokens_used=140
+                )
+            ]
+            
+            # Obtener el prompt real que usa el moderador
+            real_prompt = moderator._create_synthesis_prompt(mock_responses)
+            
+            # Mostrar el prompt real
+            panel_prompt_real = Panel(
+                real_prompt[:2000] + "..." if len(real_prompt) > 2000 else real_prompt,
+                title="🎯 PROMPT REAL DEL AI MODERATOR",
+                border_style="red"
+            )
+            console.print(panel_prompt_real)
+            
+            self.log_and_print(f"\n📏 Longitud del prompt real: {len(real_prompt)} caracteres", style="yellow")
+            
+            # Explicar cómo se usa en el flujo real
+            explicacion_flujo = """
+El prompt mostrado arriba es el que realmente se envía al LLM de síntesis (Claude 3 Haiku o GPT-3.5-Turbo) 
+para generar el meta-análisis profesional. Este prompt:
 
-{resultado_finalizacion['final_question']} 
+1. Incluye instrucciones detalladas para meta-análisis v2.0
+2. Estructura exacta esperada en la respuesta
+3. Criterios de validación y calidad
+4. Las respuestas reales de las IAs consultadas
+5. Auto-validación interna
+
+El resultado es una síntesis estructurada que se devuelve al usuario.
+            """.strip()
+            
+            panel_explicacion = Panel(
+                explicacion_flujo,
+                title="💡 CÓMO FUNCIONA EL FLUJO REAL",
+                border_style="cyan"
+            )
+            console.print(panel_explicacion)
+            
+        except Exception as e:
+            self.log_and_print(f"❌ Error mostrando prompt real: {e}", style="red")
+    
+    async def guardar_output_archivo(self):
+        """Guarda toda la salida en un archivo para documentación."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"test_output_completo_{timestamp}.txt"
+        
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write("=" * 80 + "\n")
+                f.write("🧪 PRUEBA COMPLETA DEL SISTEMA DE CONSTRUCCIÓN DE CONTEXTO\n")
+                f.write("=" * 80 + "\n\n")
+                f.write(f"Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Proyecto: {self.project_id}\n")
+                f.write(f"Sesión: {self.session_id}\n\n")
+                
+                for line in self.output_lines:
+                    f.write(line + "\n")
+            
+            self.log_and_print(f"\n📁 Output guardado en: {filename}", style="green")
+            
+        except Exception as e:
+            self.log_and_print(f"❌ Error guardando archivo: {e}", style="red")
+
+
+async def main():
+    """Función principal del script de prueba."""
+    try:
+        sistema = SistemaContextoCompleto()
+        await sistema.ejecutar_demostracion_completa()
+    except KeyboardInterrupt:
+        print("\n⚠️ Prueba interrumpida por el usuario")
+    except Exception as e:
+        print(f"\n❌ Error fatal: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

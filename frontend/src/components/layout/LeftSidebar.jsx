@@ -57,17 +57,17 @@ const LeftSidebar = ({
   }
 
   // Formatear conversaciones recientes para mostrar
-  const recentSessions = conversations.slice(0, 5).map(conv => ({
+  const recentSessions = (conversations || []).slice(0, 5).map(conv => ({
     id: conv.id,
-    time: new Date(conv.createdAt).toLocaleString('es-ES', {
+    time: new Date(conv.createdAt || conv.created_at || Date.now()).toLocaleString('es-ES', {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
     }),
-    preview: conv.question.length > 30 
-      ? conv.question.substring(0, 30) + '...' 
-      : conv.question
+    preview: (conv.question || conv.user_message || 'Sin contenido').length > 30 
+      ? (conv.question || conv.user_message || 'Sin contenido').substring(0, 30) + '...' 
+      : (conv.question || conv.user_message || 'Sin contenido')
   }))
 
   return (

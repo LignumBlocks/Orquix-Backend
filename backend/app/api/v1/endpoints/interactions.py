@@ -86,7 +86,7 @@ async def get_interaction_history(
                 synthesis_preview=synthesis_preview,
                 moderator_quality=synthesis_data.get("quality", "unknown") if interaction.moderator_synthesis_json else "unknown",
                 created_at=interaction.created_at,
-                processing_time_ms=interaction.processing_time_ms
+                processing_time_ms=interaction.processing_time_ms or 0
             )
             interaction_summaries.append(summary)
         
@@ -166,7 +166,7 @@ async def get_interaction_detail(
             ai_responses=ai_responses,  # Como dict por ahora
             moderator_synthesis=moderator_synthesis,
             created_at=interaction.created_at,
-            processing_time_ms=interaction.processing_time_ms
+            processing_time_ms=interaction.processing_time_ms or 0  # Manejar valores None
         )
         
         logger.info(f"Detalles obtenidos para interacción {interaction_id}")
