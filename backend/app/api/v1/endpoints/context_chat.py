@@ -320,9 +320,10 @@ async def generate_ai_prompts(
     db: AsyncSession = Depends(get_db)
 ) -> Dict[str, Any]:
     """
-    Genera los prompts reales usando el servicio ai_moderator.py con meta-análisis profesional.
+    Genera los prompts reales usando el query_service y prompt_templates.
+    Muestra exactamente los prompts que se enviarían a cada IA.
     """
-    logger.info(f"🎯 Generando prompts para IAs usando ai_moderator.py - Sesión: {session_id}")
+    logger.info(f"🎯 Generando prompts usando query_service - Sesión: {session_id}")
     
     try:
         # Verificar que la sesión existe y pertenece al usuario
@@ -343,99 +344,104 @@ async def generate_ai_prompts(
         # Convertir a modelo Pydantic para acceder a los campos correctamente
         session_model = context_crud.convert_interaction_to_context_session(session)
         
-        # Importar el servicio ai_moderator
-        from app.services.ai_moderator import AIModerator
-        from app.schemas.ai_response import AIRequest, StandardAIResponse, AIResponseStatus, AIProviderEnum
+        # Importar los servicios correctos
+        from app.services.query_service import QueryService
+        from app.services.prompt_templates import PromptTemplateManager
+        from app.schemas.ai_response import AIProviderEnum
+        from app.schemas.query import QueryRequest, QueryType
         from app.core.config import settings
         
-        # Crear instancia del moderador para acceder a sus prompts profesionales
-        moderator = AIModerator()
+        # Crear instancias de los servicios
+        query_service = QueryService()
+        prompt_manager = PromptTemplateManager()
         
-        # Crear respuestas simuladas para usar el sistema de prompts del moderador
-        # Esto nos permite acceder a los prompts profesionales sin tener que duplicarlos
-        mock_responses = []
-        
+        # Determinar proveedores disponibles
+        available_providers = []
         if settings.OPENAI_API_KEY:
-            mock_responses.append(StandardAIResponse(
-                ia_provider_name=AIProviderEnum.OPENAI,
-                response_text=f"Análisis basado en: {session_model.accumulated_context}. Pregunta: {request.final_question}",
-                status=AIResponseStatus.SUCCESS,
-                latency_ms=100,
-                token_usage={"prompt_tokens": 100, "completion_tokens": 200, "total_tokens": 300},
-                request_timestamp=datetime.utcnow(),
-                response_timestamp=datetime.utcnow()
-            ))
-        
+            available_providers.append(AIProviderEnum.OPENAI)
         if settings.ANTHROPIC_API_KEY:
-            mock_responses.append(StandardAIResponse(
-                ia_provider_name=AIProviderEnum.ANTHROPIC,
-                response_text=f"Perspectiva alternativa sobre: {session_model.accumulated_context}. Enfoque: {request.final_question}",
-                status=AIResponseStatus.SUCCESS,
-                latency_ms=120,
-                token_usage={"prompt_tokens": 110, "completion_tokens": 180, "total_tokens": 290},
-                request_timestamp=datetime.utcnow(),
-                response_timestamp=datetime.utcnow()
-            ))
+            available_providers.append(AIProviderEnum.ANTHROPIC)
         
-        if not mock_responses:
+        if not available_providers:
             raise HTTPException(
                 status_code=500,
-                detail="No hay adaptadores de IA configurados"
+                detail="No hay proveedores de IA configurados"
             )
         
-        # Usar el método _create_synthesis_prompt del moderador para generar el prompt profesional
-        synthesis_prompt = moderator._create_synthesis_prompt(mock_responses)
+        # Crear una QueryRequest simulada para obtener los prompts
+        query_request = QueryRequest(
+            user_question=request.final_question,
+            query_type=QueryType.CONTEXT_AWARE,
+            user_id=user_id,
+            project_id=session.project_id,
+            max_tokens=1200,
+            temperature=0.7
+        )
         
-        if not synthesis_prompt:
-            raise HTTPException(
-                status_code=500,
-                detail="Error generando prompt de síntesis profesional"
-            )
+        # Usar el contexto acumulado de la sesión
+        context_text = session_model.accumulated_context or ""
         
-        # Extraer el system message del moderador
-        moderator_system_message = "Eres un asistente de meta-análisis objetivo, analítico y altamente meticuloso. Tu tarea principal es procesar un conjunto de respuestas de múltiples modelos de IA diversos a una consulta específica del investigador. Tu objetivo es generar un reporte estructurado, claro y altamente accionable que ayude al investigador a comprender las perspectivas diversas, identificar puntos de consenso y contradicciones, y definir pasos lógicos y accionables para su investigación."
-        
-        # Generar los prompts profesionales para cada IA
+        # Generar prompts para cada proveedor usando el sistema oficial
         ai_prompts = {}
         
-        # Prompt para OpenAI usando el sistema del moderador
-        if settings.OPENAI_API_KEY:
-            ai_prompts["openai"] = {
-                "provider": "OpenAI GPT-4",
-                "model": "gpt-4",
-                "system_message": moderator_system_message,
-                "user_prompt": synthesis_prompt,
-                "parameters": {
-                    "max_tokens": 1200,
-                    "temperature": 0.3
+        for provider in available_providers:
+            try:
+                # Usar el método oficial del query_service para construir prompts
+                prompt_data = prompt_manager.build_prompt_for_provider(
+                    provider=provider,
+                    user_question=query_request.user_question,
+                    context_text=context_text,
+                    additional_vars={
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'project_name': f"Proyecto-{str(session.project_id)[:8]}"
+                    }
+                )
+                
+                # Optimizar el prompt para el proveedor
+                optimized_prompt = prompt_manager.optimize_prompt_for_provider(
+                    provider, prompt_data, query_request.max_tokens
+                )
+                
+                # Obtener modelo específico del proveedor
+                if provider == AIProviderEnum.OPENAI:
+                    model = "gpt-4o-mini"
+                elif provider == AIProviderEnum.ANTHROPIC:
+                    model = "claude-3-haiku-20240307"
+                else:
+                    model = "unknown"
+                
+                ai_prompts[provider.value.lower()] = {
+                    "provider": f"{provider.value.title()}",
+                    "model": model,
+                    "system_message": optimized_prompt['system_message'],
+                    "user_prompt": optimized_prompt['user_message'],
+                    "parameters": {
+                        "max_tokens": query_request.max_tokens,
+                        "temperature": query_request.temperature
+                    },
+                    "template_used": "prompt_templates_v2.0"
                 }
-            }
-        
-        # Prompt para Anthropic usando el sistema del moderador
-        if settings.ANTHROPIC_API_KEY:
-            ai_prompts["anthropic"] = {
-                "provider": "Anthropic Claude",
-                "model": "claude-3-opus-20240229", 
-                "system_message": moderator_system_message,
-                "user_prompt": synthesis_prompt,
-                "parameters": {
-                    "max_tokens": 1200,
-                    "temperature": 0.3
+                
+            except Exception as e:
+                logger.error(f"Error generando prompt para {provider}: {e}")
+                ai_prompts[provider.value.lower()] = {
+                    "provider": f"{provider.value.title()}",
+                    "error": f"Error generando prompt: {str(e)}"
                 }
-            }
         
-        logger.info(f"✅ Prompts profesionales generados usando ai_moderator.py para {len(ai_prompts)} proveedores")
+        logger.info(f"✅ Prompts generados usando query_service para {len(ai_prompts)} proveedores")
         
         return {
             "session_id": session_id,
             "ai_prompts": ai_prompts,
-            "prompt_type": "ai_moderator_professional",
-            "meta_analysis_version": "v2.0"
+            "prompt_system": "query_service + prompt_templates",
+            "context_used": context_text[:200] + "..." if len(context_text) > 200 else context_text,
+            "final_question": request.final_question
         }
         
     except Exception as e:
-        logger.error(f"❌ Error generando prompts profesionales: {e}")
+        logger.error(f"❌ Error generando prompts con query_service: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error generando prompts profesionales: {str(e)}"
+            detail=f"Error generando prompts: {str(e)}"
         ) 
