@@ -658,13 +658,16 @@ const CenterColumn = ({ activeProject }) => {
       const executionData = await response.json()
       console.log('✅ Prompt ejecutado:', executionData)
 
+      // Convertir el objeto responses en array para que funcione con .map()
+      const responsesArray = Object.values(executionData.responses || {})
+      
       // Agregar las respuestas al flujo conversacional
       const aiResponsesInteraction = {
         id: Date.now() + 1,
         type: 'ai_responses_from_prompt',
         prompt_id: currentPromptId,
         execution_data: executionData,
-        responses: executionData.responses,
+        responses: responsesArray,
         successful_responses: executionData.successful_responses,
         total_responses: executionData.total_responses,
         timestamp: new Date()

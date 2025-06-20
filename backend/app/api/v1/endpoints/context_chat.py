@@ -1373,8 +1373,11 @@ async def execute_prompt(
                 
                 # Crear request para el proveedor
                 ai_request = AIRequest(
-                    messages=[{"role": "user", "content": prompt_to_use}],
-                    provider=provider
+                    prompt=prompt_to_use,
+                    max_tokens=1200,
+                    temperature=0.7,
+                    project_id=str(ia_prompt.project_id),
+                    user_id=str(current_user.id)
                 )
                 
                 # Consultar al proveedor
