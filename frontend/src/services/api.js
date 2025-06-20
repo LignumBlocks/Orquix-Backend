@@ -10,7 +10,8 @@ const handleResponse = async (response) => {
 
 // Función para obtener headers con autenticación
 const getAuthHeaders = () => {
-  const token = localStorage.getItem('auth_token')
+  // Usar token mock para desarrollo
+  const token = localStorage.getItem('auth_token') || 'dev-mock-token-12345'
   const headers = {
     'Content-Type': 'application/json'
   }
@@ -70,6 +71,15 @@ const api = {
   // Obtener sesión de contexto actual
   getContextSession: async (sessionId) => {
     const response = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${sessionId}`, {
+      method: 'GET',
+      headers: getAuthHeaders()
+    })
+    return handleResponse(response)
+  },
+
+  // Obtener sesión de contexto activa para un proyecto
+  getActiveContextSession: async (projectId) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/context-chat/projects/${projectId}/active-context-session`, {
       method: 'GET',
       headers: getAuthHeaders()
     })

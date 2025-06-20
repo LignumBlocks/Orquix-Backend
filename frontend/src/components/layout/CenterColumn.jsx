@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { MicIcon, SendIcon, LoaderIcon, AlertCircleIcon, MessageSquareIcon, BrainIcon, SparklesIcon, ArrowRightIcon, ChevronDownIcon, ChevronUpIcon, CheckIcon } from 'lucide-react'
+import { MicIcon, SendIcon, LoaderIcon, AlertCircleIcon, MessageSquareIcon, BrainIcon, ArrowRightIcon, ChevronDownIcon, ChevronUpIcon, CheckIcon } from 'lucide-react'
 import useAppStore from '../../store/useAppStore'
 import ConversationFlow from '../ui/ConversationFlow'
 import AIResponseCard from '../ui/AIResponseCard'
@@ -23,6 +23,15 @@ const CenterColumn = ({ activeProject }) => {
   const [moderatorPromptData, setModeratorPromptData] = useState(null)
   const [isSynthesizing, setIsSynthesizing] = useState(false)
   const [synthesisData, setSynthesisData] = useState(null)
+  
+  // ==========================================
+  // NUEVO: Estados para el botón "Orquestar"
+  // ==========================================
+  const [orchestrateState, setOrchestrateState] = useState('generate_prompts') // 'generate_prompts' | 'generate_analisis'
+  const [currentPromptId, setCurrentPromptId] = useState(null)
+  const [generatedPrompt, setGeneratedPrompt] = useState(null)
+  const [isOrchestrating, setIsOrchestrating] = useState(false)
+
   const chatContainerRef = useRef(null)
 
   const {
@@ -51,6 +60,11 @@ const CenterColumn = ({ activeProject }) => {
     setError(null)
     setConversationFlow([])
     setContextSession(null)
+    // Resetear estados de orquestación
+    setOrchestrateState('generate_prompts')
+    setCurrentPromptId(null)
+    setGeneratedPrompt(null)
+    setIsOrchestrating(false)
   }, [activeProject?.id, clearLoadingStates])
 
   // Auto-limpiar errores después de 5 segundos
@@ -75,44 +89,31 @@ const CenterColumn = ({ activeProject }) => {
     setError(null)
 
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/context-chat/projects/${activeProject.id}/context-chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer dev-mock-token-12345'
-        },
-        body: JSON.stringify({
-          user_message: userMessage,
-          session_id: contextSession?.session_id || null
-        })
-      })
-
-      if (!response.ok) {
-        throw new Error(`Error ${response.status}: ${response.statusText}`)
-      }
-
-      const data = await response.json()
+      // Usar la función del store para que se actualice correctamente el accumulatedContext
+      const response = await sendContextMessage(userMessage)
       
-      // Actualizar session si es nueva
-      if (!contextSession) {
-        setContextSession({ session_id: data.session_id })
-      }
+      if (response) {
+        // Actualizar session si es nueva
+        if (!contextSession && response.session_id) {
+          setContextSession({ session_id: response.session_id })
+        }
 
-      // Agregar interacción al flujo conversacional
-      const newInteraction = {
-        id: Date.now(),
-        type: 'context_interaction',
-        user_message: userMessage,
-        ai_response: data.ai_response,
-        message_type: data.message_type,
-        accumulated_context: data.accumulated_context,
-        suggestions: data.suggestions || [],
-        context_elements_count: data.context_elements_count,
-        suggested_final_question: data.suggested_final_question,
-        timestamp: new Date()
-      }
+        // Agregar interacción al flujo conversacional LOCAL
+        const newInteraction = {
+          id: Date.now(),
+          type: 'context_interaction',
+          user_message: userMessage,
+          ai_response: response.ai_response,
+          message_type: response.message_type,
+          accumulated_context: response.accumulated_context,
+          suggestions: response.suggestions || [],
+          context_elements_count: response.context_elements_count,
+          suggested_final_question: response.suggested_final_question,
+          timestamp: new Date()
+        }
 
-      setConversationFlow(prev => [...prev, newInteraction])
+        setConversationFlow(prev => [...prev, newInteraction])
+      }
 
     } catch (error) {
       console.error('Error en context chat:', error)
@@ -218,9 +219,64 @@ const CenterColumn = ({ activeProject }) => {
     }
   }
 
-  const handleQueryAIs = async () => {
-    if (!contextSession?.session_id || !activeProject?.id) {
+  // Nueva función que usa la pregunta del input directamente
+  const handleGeneratePromptsWithQuestion = async (userQuestion) => {
+    if (!contextSessionId || !activeProject?.id) {
       setError('No hay sesión de contexto o proyecto activo')
+      return
+    }
+
+    setIsSendingToAIs(true)
+    setError(null)
+    setMessage('') // Limpiar el input después de tomar la pregunta
+
+    try {
+      console.log('🎯 Generando prompts para las IAs con pregunta del input:', userQuestion)
+
+      // Generar los prompts usando la pregunta del input
+      const finalizeResponse = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSessionId}/generate-ai-prompts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer dev-mock-token-12345'
+        },
+        body: JSON.stringify({
+          session_id: contextSessionId,
+          final_question: userQuestion
+        })
+      })
+
+      if (!finalizeResponse.ok) {
+        throw new Error(`Error al generar prompts: ${finalizeResponse.status}`)
+      }
+
+      const finalizeData = await finalizeResponse.json()
+      console.log('📋 Prompts generados con pregunta del input:', finalizeData)
+
+      // Agregar los prompts generados al flujo conversacional
+      const promptsInteraction = {
+        id: Date.now() + 1,
+        type: 'prompts_generated',
+        user_question: userQuestion,
+        prompts: finalizeData.ai_prompts || {},
+        context_used: finalizeData.context_used || '',
+        prompt_system: finalizeData.prompt_system || 'query_service + prompt_templates',
+        timestamp: new Date()
+      }
+
+      setConversationFlow(prev => [...prev, promptsInteraction])
+
+    } catch (error) {
+      console.error('Error al generar prompts:', error)
+      setError(error.message || 'Error al generar prompts para las IAs')
+    } finally {
+      setIsSendingToAIs(false)
+    }
+  }
+
+  const handleQueryAIs = async (customQuestion = null) => {
+    if (!activeProject?.id) {
+      setError('No hay proyecto activo')
       return
     }
 
@@ -228,42 +284,90 @@ const CenterColumn = ({ activeProject }) => {
     setError(null)
 
     try {
-      // Obtener la pregunta de la última interacción de prompts generados
-      const promptsInteraction = conversationFlow.find(interaction => interaction.type === 'prompts_generated')
-      const userQuestion = promptsInteraction?.user_question || "¿Qué recomendaciones me puedes dar basándote en este contexto?"
+      let userQuestion = customQuestion
+      
+      if (!userQuestion) {
+        // Obtener la pregunta de la última interacción de prompts generados
+        const promptsInteraction = conversationFlow.find(interaction => interaction.type === 'prompts_generated')
+        userQuestion = promptsInteraction?.user_question || "¿Qué recomendaciones me puedes dar basándote en este contexto?"
+      }
 
-      console.log('🤖 Consultando IAs individualmente:', userQuestion)
+      console.log('🤖 Consultando IAs:', userQuestion)
+      console.log('🔍 Session ID:', contextSession?.session_id || 'No disponible')
 
-      // Consultar las IAs usando el nuevo endpoint específico
-      const queryResponse = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSession.session_id}/query-ais`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer dev-mock-token-12345'
-        },
-        body: JSON.stringify({
-          session_id: contextSession.session_id,
-          final_question: userQuestion
+      let queryResponse
+
+      if (contextSession?.session_id) {
+        // Si hay sesión de contexto, usarla
+        queryResponse = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSession.session_id}/query-ais`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer dev-mock-token-12345'
+          },
+          body: JSON.stringify({
+            session_id: contextSession.session_id,
+            final_question: userQuestion
+          })
         })
-      })
+      } else {
+        // Si no hay sesión de contexto, crear una temporal
+        console.log('🆕 Creando sesión temporal para consulta directa')
+        
+        const contextResponse = await fetch(`http://localhost:8000/api/v1/context-chat/projects/${activeProject.id}/context-chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer dev-mock-token-12345'
+          },
+                  body: JSON.stringify({
+          user_message: userQuestion,
+          session_id: null
+        })
+        })
+
+        if (!contextResponse.ok) {
+          throw new Error(`Error creando sesión temporal: ${contextResponse.status}`)
+        }
+
+        const contextData = await contextResponse.json()
+        const tempSessionId = contextData.session_id
+
+        queryResponse = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${tempSessionId}/query-ais`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer dev-mock-token-12345'
+          },
+          body: JSON.stringify({
+            session_id: tempSessionId,
+            final_question: userQuestion
+          })
+        })
+      }
 
       if (!queryResponse.ok) {
         throw new Error(`Error al consultar IAs: ${queryResponse.status}`)
       }
 
       const queryData = await queryResponse.json()
-      console.log('🤖 Respuestas individuales recibidas:', queryData)
+      console.log('🤖 Respuestas recibidas:', queryData)
 
-      // Agregar las respuestas individuales al flujo conversacional
+      // Limpiar el input si se usó una pregunta personalizada
+      if (customQuestion) {
+        setMessage('')
+      }
+
+      // Agregar las respuestas al flujo conversacional
       const aiResponsesInteraction = {
         id: Date.now() + 2,
         type: 'ai_responses',
-        user_question: queryData.user_question,
+        user_question: userQuestion,
         individual_responses: queryData.individual_responses || [],
         total_processing_time_ms: queryData.total_processing_time_ms,
         successful_responses: queryData.successful_responses,
         total_responses: queryData.total_responses,
-        context_used: queryData.context_used,
+        context_used: queryData.context_used || (accumulatedContext ? 'Contexto acumulado utilizado' : 'Sin contexto previo'),
         timestamp: new Date()
       }
 
@@ -276,6 +380,8 @@ const CenterColumn = ({ activeProject }) => {
       setIsQueryingAIs(false)
     }
   }
+
+
 
   const handleRetryAI = async (provider) => {
     if (!contextSession?.session_id) {
@@ -441,11 +547,139 @@ const CenterColumn = ({ activeProject }) => {
 
       setConversationFlow(prev => [...prev, synthesisInteraction])
 
+      // Después de la síntesis del moderador, volver al estado inicial
+      setOrchestrateState('generate_prompts')
+      setCurrentPromptId(null)
+      setGeneratedPrompt(null)
+
     } catch (error) {
       console.error('Error ejecutando síntesis:', error)
       setError(`Error ejecutando síntesis: ${error.message}`)
     } finally {
       setIsSynthesizing(false)
+    }
+  }
+
+  // ==========================================
+  // NUEVAS FUNCIONES PARA EL FLUJO "ORQUESTAR"
+  // ==========================================
+
+  const handleOrchestrate = async () => {
+    // Solo generar prompts, la ejecución se hace desde los botones del prompt
+    await handleGeneratePromptForOrchestration()
+  }
+
+  const handleGeneratePromptForOrchestration = async () => {
+    if (!activeProject?.id || !message.trim()) {
+      setError('No hay proyecto activo o mensaje vacío')
+      return
+    }
+
+    setIsOrchestrating(true)
+    setError(null)
+
+    try {
+      const userQuery = message.trim()
+      console.log('🎯 Generando prompt para orquestación:', userQuery)
+
+      // Llamar al nuevo endpoint de generar prompt
+      const response = await fetch(`http://localhost:8000/api/v1/context-chat/projects/${activeProject.id}/generate-prompt`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer dev-mock-token-12345'
+        },
+        body: JSON.stringify({
+          query: userQuery,
+          context_session_id: contextSessionId
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(`Error al generar prompt: ${response.status}`)
+      }
+
+      const promptData = await response.json()
+      console.log('✅ Prompt generado:', promptData)
+
+      // Guardar el prompt generado
+      setCurrentPromptId(promptData.prompt_id)
+      setGeneratedPrompt(promptData)
+      setMessage('') // Limpiar el input
+
+      // Agregar el prompt generado al flujo conversacional
+      const promptInteraction = {
+        id: Date.now(),
+        type: 'prompt_generated',
+        user_query: userQuery,
+        prompt_data: promptData,
+        timestamp: new Date()
+      }
+
+      setConversationFlow(prev => [...prev, promptInteraction])
+
+    } catch (error) {
+      console.error('❌ Error generando prompt:', error)
+      setError(error.message || 'Error al generar el prompt')
+    } finally {
+      setIsOrchestrating(false)
+    }
+  }
+
+  const handleExecutePromptForOrchestration = async () => {
+    if (!currentPromptId) {
+      setError('No hay prompt generado para ejecutar')
+      return
+    }
+
+    setIsOrchestrating(true)
+    setError(null)
+
+    try {
+      console.log('🚀 Ejecutando prompt:', currentPromptId)
+
+      // Llamar al endpoint de ejecutar prompt
+      const response = await fetch(`http://localhost:8000/api/v1/context-chat/prompts/${currentPromptId}/execute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer dev-mock-token-12345'
+        },
+        body: JSON.stringify({
+          prompt_id: currentPromptId,
+          use_edited_version: false // Por ahora usar la versión original
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(`Error al ejecutar prompt: ${response.status}`)
+      }
+
+      const executionData = await response.json()
+      console.log('✅ Prompt ejecutado:', executionData)
+
+      // Agregar las respuestas al flujo conversacional
+      const aiResponsesInteraction = {
+        id: Date.now() + 1,
+        type: 'ai_responses_from_prompt',
+        prompt_id: currentPromptId,
+        execution_data: executionData,
+        responses: executionData.responses,
+        successful_responses: executionData.successful_responses,
+        total_responses: executionData.total_responses,
+        timestamp: new Date()
+      }
+
+      setConversationFlow(prev => [...prev, aiResponsesInteraction])
+
+      // El estado se mantendrá en 'generate_analisis' hasta que el moderador haga su síntesis
+      // Después de la síntesis, volverá a 'generate_prompts' en handleSynthesizeResponses
+
+    } catch (error) {
+      console.error('❌ Error ejecutando prompt:', error)
+      setError(error.message || 'Error al ejecutar el prompt')
+    } finally {
+      setIsOrchestrating(false)
     }
   }
 
@@ -569,8 +803,8 @@ const CenterColumn = ({ activeProject }) => {
                          
                          <p className="text-sm text-gray-800">{interaction.ai_response}</p>
                          
-                         {/* Contexto Acumulado */}
-                         {interaction.accumulated_context && (
+                         {/* Contexto Acumulado - OCULTO: Ahora se muestra en el sidebar derecho */}
+                         {/* {interaction.accumulated_context && (
                            <div className="mt-3 p-3 bg-blue-50 rounded border border-blue-200">
                              <div className="flex items-center space-x-2 mb-2">
                                <SparklesIcon className="w-4 h-4 text-blue-600" />
@@ -578,7 +812,7 @@ const CenterColumn = ({ activeProject }) => {
                              </div>
                              <p className="text-xs text-blue-800">{interaction.accumulated_context}</p>
                            </div>
-                         )}
+                         )} */}
                          
                          {/* Sugerencias */}
                          {interaction.suggestions && interaction.suggestions.length > 0 && (
@@ -612,16 +846,29 @@ const CenterColumn = ({ activeProject }) => {
                      </div>
                    </>
                  ) : interaction.type === 'prompts_generated' ? (
-                   /* Renderizar prompts generados */
+                   /* Renderizar prompts generados - Mostrar/ocultar basado en showGeneratedPrompts */
                    <div className="space-y-4">
                      <div className="text-center p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-200">
                        <h3 className="text-lg font-semibold text-green-800 mb-2">✨ Prompts Generados para las IAs</h3>
                        <p className="text-sm text-green-700 mb-2">Los siguientes prompts están listos para las IAs principales:</p>
                        <p className="text-xs text-green-600 font-medium">"{interaction.user_question}"</p>
+                       {!showGeneratedPrompts && (
+                         <div className="mt-3">
+                           <p className="text-xs text-blue-600 mb-2 italic">
+                             👁️ Los prompts están listos. Usa el botón en el input para ver detalles.
+                           </p>
+                           <button
+                             onClick={() => setShowGeneratedPrompts(true)}
+                             className="px-3 py-1 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors"
+                           >
+                             Ver Prompts Aquí
+                           </button>
+                         </div>
+                       )}
                      </div>
                      
-                     {/* Info del sistema usado */}
-                     {interaction.prompt_system && (
+                     {/* Info del sistema usado - Solo mostrar si showGeneratedPrompts es true */}
+                     {showGeneratedPrompts && interaction.prompt_system && (
                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
                          <div className="text-xs font-medium text-blue-800 mb-1">SISTEMA DE PROMPTS:</div>
                          <div className="text-xs text-blue-700">{interaction.prompt_system}</div>
@@ -634,8 +881,8 @@ const CenterColumn = ({ activeProject }) => {
                        </div>
                      )}
 
-                     {/* Prompts para cada IA disponible */}
-                     {Object.entries(interaction.prompts || {}).map(([providerKey, promptData]) => {
+                     {/* Prompts para cada IA disponible - Solo mostrar si showGeneratedPrompts es true */}
+                     {showGeneratedPrompts && Object.entries(interaction.prompts || {}).map(([providerKey, promptData]) => {
                        const isOpenAI = providerKey === 'openai'
                        const bgColor = isOpenAI ? 'bg-green-50 border-green-200' : 'bg-orange-50 border-orange-200'
                        const textColor = isOpenAI ? 'text-green-800' : 'text-orange-800'
@@ -991,6 +1238,169 @@ const CenterColumn = ({ activeProject }) => {
                        })}
                      </div>
                    </div>
+                 ) : interaction.type === 'prompt_generated' ? (
+                   /* Renderizar prompt generado para orquestación */
+                   <div className="space-y-4">
+                     <div className="text-center p-4 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
+                       <h3 className="text-lg font-semibold text-purple-800 mb-2">🎯 Prompt Generado</h3>
+                       <p className="text-sm text-purple-700 mb-2">
+                         Prompt listo para consultar a las IAs
+                       </p>
+                       <p className="text-xs text-purple-600 italic">
+                         "{interaction.user_query}"
+                       </p>
+                     </div>
+
+                     {/* Vista previa del prompt */}
+                     <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                       <div className="flex items-center justify-between mb-3">
+                         <h4 className="font-medium text-gray-800">Prompt Generado</h4>
+                         <button
+                           onClick={() => setExpandedPrompts(prev => ({
+                             ...prev,
+                             [`prompt-${interaction.id}`]: !prev[`prompt-${interaction.id}`]
+                           }))}
+                           className="text-blue-600 hover:text-blue-800 text-sm flex items-center space-x-1"
+                         >
+                           {expandedPrompts[`prompt-${interaction.id}`] ? (
+                             <>
+                               <ChevronUpIcon className="w-4 h-4" />
+                               <span>Contraer</span>
+                             </>
+                           ) : (
+                             <>
+                               <ChevronDownIcon className="w-4 h-4" />
+                               <span>Ver Completo</span>
+                             </>
+                           )}
+                         </button>
+                       </div>
+                       
+                       <div className="text-sm text-gray-700 whitespace-pre-wrap font-mono bg-white p-3 rounded border">
+                         {expandedPrompts[`prompt-${interaction.id}`] 
+                           ? interaction.prompt_data?.generated_prompt 
+                           : (interaction.prompt_data?.generated_prompt?.substring(0, 200) + '...')
+                         }
+                       </div>
+
+                       {/* Metadatos del prompt */}
+                       <div className="mt-3 pt-3 border-t border-gray-200 text-xs text-gray-600">
+                         <div className="grid grid-cols-2 gap-4">
+                           <div>
+                             <span className="font-medium">ID del Prompt:</span>
+                             <br />
+                             {interaction.prompt_data?.prompt_id}
+                           </div>
+                           <div>
+                             <span className="font-medium">Estado:</span>
+                             <br />
+                             {interaction.prompt_data?.status || 'draft'}
+                           </div>
+                         </div>
+                       </div>
+                     </div>
+
+                     {/* Botones de acción */}
+                     <div className="flex space-x-3">
+                       <button
+                         onClick={() => {
+                           setCurrentPromptId(interaction.prompt_data?.prompt_id)
+                           setGeneratedPrompt(interaction.prompt_data)
+                           handleExecutePromptForOrchestration()
+                         }}
+                         disabled={isOrchestrating}
+                         className={`flex-1 px-4 py-2 rounded-lg flex items-center justify-center ${
+                           isOrchestrating
+                             ? 'bg-gray-300 cursor-not-allowed'
+                             : 'bg-green-600 hover:bg-green-700'
+                         } text-white font-medium transition-colors`}
+                       >
+                         {isOrchestrating ? (
+                           <LoaderIcon className="w-4 h-4 animate-spin mr-2" />
+                         ) : (
+                           <span className="mr-2">✅</span>
+                         )}
+                         Ejecutar Prompt
+                       </button>
+                       
+                       <button
+                         onClick={() => {
+                           // TODO: Implementar edición de prompt
+                           alert('Función de edición en desarrollo')
+                         }}
+                         className="flex-1 px-4 py-2 rounded-lg flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+                       >
+                         <span className="mr-2">✏️</span>
+                         Modificar Prompt
+                       </button>
+                     </div>
+                   </div>
+                 ) : interaction.type === 'ai_responses_from_prompt' ? (
+                   /* Renderizar respuestas de IAs desde prompt */
+                   <div className="space-y-4">
+                     <div className="text-center p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-200">
+                       <h3 className="text-lg font-semibold text-green-800 mb-2">🤖 Respuestas de las IAs</h3>
+                       <p className="text-sm text-green-700 mb-2">
+                         {interaction.successful_responses}/{interaction.total_responses} IAs respondieron exitosamente
+                       </p>
+                       <p className="text-xs text-green-600 font-medium">
+                         Prompt ID: {interaction.prompt_id}
+                       </p>
+                     </div>
+
+                     {/* Respuestas Individuales */}
+                     <div className="space-y-4">
+                       {interaction.responses?.map((response, idx) => {
+                         const isOpenAI = response.provider === 'openai'
+                         const isAnthropic = response.provider === 'anthropic'
+                         const bgColor = isOpenAI ? 'bg-green-50 border-green-200' : 
+                                        isAnthropic ? 'bg-orange-50 border-orange-200' : 
+                                        'bg-gray-50 border-gray-200'
+                         const textColor = isOpenAI ? 'text-green-800' : 
+                                          isAnthropic ? 'text-orange-800' : 
+                                          'text-gray-800'
+                         const dotColor = isOpenAI ? 'bg-green-500' : 
+                                         isAnthropic ? 'bg-orange-500' : 
+                                         'bg-gray-500'
+                         
+                         return (
+                           <div key={idx} className={`${bgColor} border rounded-lg p-4`}>
+                             <div className="flex items-center justify-between mb-3">
+                               <div className="flex items-center space-x-2">
+                                 <div className={`w-3 h-3 ${dotColor} rounded-full`}></div>
+                                 <span className={`font-medium ${textColor}`}>
+                                   {response.provider?.toUpperCase()} {response.model && `(${response.model})`}
+                                 </span>
+                               </div>
+                               <div className="flex items-center space-x-2 text-xs">
+                                 {response.success ? (
+                                   <span className="text-green-600 flex items-center">
+                                     <CheckIcon className="w-3 h-3 mr-1" />
+                                     {response.processing_time_ms}ms
+                                   </span>
+                                 ) : (
+                                   <span className="text-red-600 flex items-center">
+                                     <AlertCircleIcon className="w-3 h-3 mr-1" />
+                                     Error
+                                   </span>
+                                 )}
+                               </div>
+                             </div>
+                             
+                             {response.success ? (
+                               <div className={`text-sm whitespace-pre-wrap ${textColor} leading-relaxed`}>
+                                 {response.content}
+                               </div>
+                             ) : (
+                               <div className="text-red-600 text-sm">
+                                 ⚠️ {response.error}
+                               </div>
+                             )}
+                           </div>
+                         )
+                       })}
+                     </div>
+                   </div>
                  ) : interaction.type === 'synthesis_completed' ? (
                    /* Renderizar síntesis del moderador */
                    <div className="space-y-6">
@@ -1234,116 +1644,7 @@ const CenterColumn = ({ activeProject }) => {
                </div>
              ))}
              
-             {/* Botón "Generar Prompts" - visible si hay contexto y no se han generado prompts */}
-             {conversationFlow.length > 0 && !conversationFlow.some(interaction => interaction.type === 'prompts_generated') && (
-               <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4">
-                 <button
-                   onClick={handleGeneratePrompts}
-                   disabled={isSendingToAIs}
-                   className={`w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-lg font-medium transition-colors ${
-                     isSendingToAIs
-                       ? 'bg-gray-300 cursor-not-allowed'
-                       : 'bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white'
-                   }`}
-                 >
-                   {isSendingToAIs ? (
-                     <>
-                       <LoaderIcon className="w-5 h-5 animate-spin" />
-                       <span>Generando Prompts...</span>
-                     </>
-                   ) : (
-                     <>
-                       <SparklesIcon className="w-5 h-5" />
-                       <span>Generar Prompts para las IAs</span>
-                     </>
-                   )}
-                 </button>
-               </div>
-             )}
 
-             {/* Botón "Consultar a las IAs" - visible solo después de generar prompts y antes de consultar */}
-             {conversationFlow.some(interaction => interaction.type === 'prompts_generated') && 
-              !conversationFlow.some(interaction => interaction.type === 'ai_responses') && (
-               <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4">
-                 <button
-                   onClick={handleQueryAIs}
-                   disabled={isQueryingAIs}
-                   className={`w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-lg font-medium transition-colors ${
-                     isQueryingAIs
-                       ? 'bg-gray-300 cursor-not-allowed'
-                       : 'bg-gradient-to-r from-green-500 to-blue-500 hover:from-green-600 hover:to-blue-600 text-white'
-                   }`}
-                 >
-                   {isQueryingAIs ? (
-                     <>
-                       <LoaderIcon className="w-5 h-5 animate-spin" />
-                       <span>Consultando IAs...</span>
-                     </>
-                   ) : (
-                     <>
-                       <BrainIcon className="w-5 h-5" />
-                       <span>Consultar a las IAs</span>
-                     </>
-                   )}
-                 </button>
-               </div>
-             )}
-
-             {/* Botón "Mostrar Prompt del Moderador" - visible después de que las IAs hayan respondido */}
-             {conversationFlow.some(interaction => interaction.type === 'ai_responses') && 
-              !conversationFlow.some(interaction => interaction.type === 'moderator_prompt_generated') && (
-               <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4">
-                 <button
-                   onClick={handleGenerateModeratorPrompt}
-                   disabled={isGeneratingModeratorPrompt}
-                   className={`w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-lg font-medium transition-colors ${
-                     isGeneratingModeratorPrompt
-                       ? 'bg-gray-300 cursor-not-allowed'
-                       : 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white'
-                   }`}
-                 >
-                   {isGeneratingModeratorPrompt ? (
-                     <>
-                       <LoaderIcon className="w-5 h-5 animate-spin" />
-                       <span>Generando Prompt del Moderador...</span>
-                     </>
-                   ) : (
-                     <>
-                       <MessageSquareIcon className="w-5 h-5" />
-                       <span>Mostrar Prompt del Moderador</span>
-                     </>
-                   )}
-                 </button>
-               </div>
-             )}
-
-             {/* Botón "Analizar" - visible solo después de mostrar el prompt del moderador */}
-             {conversationFlow.some(interaction => interaction.type === 'moderator_prompt_generated') && 
-              !conversationFlow.some(interaction => interaction.type === 'synthesis_completed') && (
-               <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4">
-                 <button
-                   onClick={handleSynthesizeResponses}
-                   disabled={isSynthesizing}
-                   className={`w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-lg font-medium transition-colors ${
-                     isSynthesizing
-                       ? 'bg-gray-300 cursor-not-allowed'
-                       : 'bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white'
-                   }`}
-                 >
-                   {isSynthesizing ? (
-                     <>
-                       <LoaderIcon className="w-5 h-5 animate-spin" />
-                       <span>Analizando...</span>
-                     </>
-                   ) : (
-                     <>
-                       <MessageSquareIcon className="w-5 h-5" />
-                       <span>🔬 Analizar</span>
-                     </>
-                   )}
-                 </button>
-               </div>
-             )}
            </div>
         )}
       </div>
@@ -1380,21 +1681,45 @@ const CenterColumn = ({ activeProject }) => {
                   e.target.style.height = 'auto'
                   e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'
                 }}
-                disabled={isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs}
+                disabled={isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs || isOrchestrating}
               />
             </div>
+            
+            {/* Botón "Orquestar" - Solo visible en estado inicial */}
+            {message.trim() && orchestrateState === 'generate_prompts' && (
+              <button
+                type="button"
+                onClick={handleOrchestrate}
+                disabled={isOrchestrating || isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs}
+                className={`px-3 py-2 rounded-lg flex items-center justify-center min-w-[100px] h-[44px] ${
+                  isOrchestrating || isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs
+                    ? 'bg-gray-300 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600'
+                } text-white transition-colors text-sm font-medium`}
+                title="Generar prompt para las IAs"
+              >
+                {isOrchestrating ? (
+                  <LoaderIcon className="w-4 h-4 animate-spin mr-1" />
+                ) : (
+                  <>
+                    <span className="mr-1">🎯</span>
+                    <span>Orquestar</span>
+                  </>
+                )}
+              </button>
+            )}
             
             <button
               type="button"
               onClick={handleButtonClick}
-              disabled={!message.trim() || isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs}
+              disabled={!message.trim() || isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs || isOrchestrating}
               className={`px-4 py-2 rounded-lg flex items-center justify-center min-w-[44px] h-[44px] ${
-                !message.trim() || isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs
+                !message.trim() || isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs || isOrchestrating
                   ? 'bg-gray-300 cursor-not-allowed'
                   : 'bg-blue-500 hover:bg-blue-600'
               } text-white transition-colors`}
             >
-              {isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs ? (
+              {isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs || isOrchestrating ? (
                 <LoaderIcon className="w-5 h-5 animate-spin" />
               ) : (
                 <SendIcon className="w-5 h-5" />
@@ -1404,10 +1729,10 @@ const CenterColumn = ({ activeProject }) => {
           
           <div className="mt-2 text-xs text-gray-500 flex items-center justify-between">
             <span>Presiona Enter para enviar, Shift+Enter para nueva línea</span>
-            {(isQuerying || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs) && (
+            {(isQuerying || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs || isOrchestrating) && (
               <span className="text-blue-600 flex items-center">
                 <LoaderIcon className="w-3 h-3 animate-spin mr-1" />
-                Procesando...
+                {isOrchestrating ? 'Orquestando...' : 'Procesando...'}
               </span>
             )}
           </div>

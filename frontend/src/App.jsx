@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import LeftSidebar from './components/layout/LeftSidebar'
 import CenterColumn from './components/layout/CenterColumn'
+import RightSidebar from './components/layout/RightSidebar'
 import MobileNavigation from './components/layout/MobileNavigation'
 import useAppStore from './store/useAppStore'
 import './App.css'
@@ -25,11 +26,16 @@ function App() {
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-h-0 bg-white">
+      <main className="flex-1 flex min-h-0 bg-white">
         <div className="flex-1 flex flex-col overflow-hidden">
           <CenterColumn 
             activeProject={activeProject}
           />
+        </div>
+        
+        {/* Right Sidebar - Hidden on mobile */}
+        <div className="hidden md:block md:w-80 lg:w-96 flex-shrink-0 border-l border-gray-200 bg-white">
+          <RightSidebar />
         </div>
       </main>
     </div>

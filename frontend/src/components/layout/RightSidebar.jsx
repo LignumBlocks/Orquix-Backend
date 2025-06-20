@@ -1,19 +1,60 @@
 import { useState, useEffect } from 'react'
-import { SettingsIcon, ChevronDownIcon, ChevronRightIcon, RefreshCwIcon, LoaderIcon } from 'lucide-react'
+import { SettingsIcon, ChevronDownIcon, ChevronRightIcon, RefreshCwIcon, LoaderIcon, FileTextIcon, CpuIcon } from 'lucide-react'
 import useAppStore from '../../store/useAppStore'
 
 const RightSidebar = ({ isMobile = false }) => {
   const [expandedAgents, setExpandedAgents] = useState(new Set())
+  const [activeTab, setActiveTab] = useState('context') // 'context' o 'agents'
 
   // Zustand store
   const {
-    aiAgents,
-    aiHealth,
-    loadingAiHealth,
     isQuerying,
     activeConversation,
-    loadAiHealth
+    accumulatedContext,
+    contextMessages,
+    contextBuildingMode
   } = useAppStore()
+
+  // Estados locales para agentes IA (temporal hasta implementar en store)
+  const [aiAgents] = useState([
+    {
+      id: 1,
+      name: "GPT-4",
+      provider: "OpenAI",
+      icon: "🤖",
+      color: "blue",
+      latency: "1.2s"
+    },
+    {
+      id: 2,
+      name: "Claude-3",
+      provider: "Anthropic", 
+      icon: "🧠",
+      color: "orange",
+      latency: "0.8s"
+    }
+  ])
+  
+  const [aiHealth] = useState({
+    aiProviders: {
+      openai: { status: 'healthy' },
+      anthropic: { status: 'healthy' }
+    },
+    performance: {
+      response_time: 1200,
+      success_rate: 95
+    }
+  })
+  
+  const [loadingAiHealth, setLoadingAiHealth] = useState(false)
+  
+  const loadAiHealth = () => {
+    setLoadingAiHealth(true)
+    // Simular carga
+    setTimeout(() => {
+      setLoadingAiHealth(false)
+    }, 1000)
+  }
 
   // Cargar estado de IAs al montar el componente
   useEffect(() => {
@@ -82,7 +123,7 @@ const RightSidebar = ({ isMobile = false }) => {
   }
 
   // Actualizar agentes con estado real del backend
-  const agentsWithRealStatus = aiAgents.map(agent => ({
+  const agentsWithRealStatus = (aiAgents || []).map(agent => ({
     ...agent,
     status: getProviderStatus(agent.provider),
     latency: getRandomLatency(agent.latency, getProviderStatus(agent.provider) === 'error'),
@@ -94,23 +135,244 @@ const RightSidebar = ({ isMobile = false }) => {
   }))
 
   return (
-    <div className={`p-4 ${isMobile ? '' : 'h-full'} custom-scrollbar`}>
+    <div className={`${isMobile ? '' : 'h-full'} flex flex-col`}>
+      {/* Tab Headers */}
+      <div className="flex border-b border-gray-200 bg-white">
+        <button
+          onClick={() => setActiveTab('context')}
+          className={`flex-1 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'context'
+              ? 'border-blue-500 text-blue-600 bg-blue-50'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+          }`}
+        >
+          <div className="flex items-center justify-center space-x-2">
+            <FileTextIcon className="w-4 h-4" />
+            <span>Contexto</span>
+          </div>
+        </button>
+        <button
+          onClick={() => setActiveTab('agents')}
+          className={`flex-1 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'agents'
+              ? 'border-blue-500 text-blue-600 bg-blue-50'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+          }`}
+        >
+          <div className="flex items-center justify-center space-x-2">
+            <CpuIcon className="w-4 h-4" />
+            <span>IAs</span>
+          </div>
+        </button>
+      </div>
+
+      {/* Tab Content */}
+      <div className="flex-1 overflow-hidden">
+        {activeTab === 'context' ? (
+          <ContextTab 
+            accumulatedContext={accumulatedContext}
+            contextMessages={contextMessages}
+            contextBuildingMode={contextBuildingMode}
+          />
+        ) : (
+          <AgentsTab 
+            agentsWithRealStatus={agentsWithRealStatus}
+            expandedAgents={expandedAgents}
+            toggleAgentExpansion={toggleAgentExpansion}
+            getStatusClasses={getStatusClasses}
+            getIconColor={getIconColor}
+            loadingAiHealth={loadingAiHealth}
+            loadAiHealth={loadAiHealth}
+            isQuerying={isQuerying}
+            activeConversation={activeConversation}
+            aiHealth={aiHealth}
+            aiAgents={aiAgents}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Componente para el tab de Contexto
+const ContextTab = ({ accumulatedContext, contextMessages, contextBuildingMode }) => {
+  const formatContext = (context) => {
+    if (!context || !context.trim()) {
+      return "No hay contexto disponible en esta sesión."
+    }
+
+    // Dividir por secciones si contiene markdown
+    const sections = context.split('\n\n').filter(section => section.trim())
+    
+    return sections.map((section, index) => {
+      const trimmedSection = section.trim()
+      
+      // Detectar títulos (líneas que empiezan con #)
+      if (trimmedSection.startsWith('#')) {
+        const level = (trimmedSection.match(/^#+/) || [''])[0].length
+        const title = trimmedSection.replace(/^#+\s*/, '')
+        const headerClass = level === 1 ? 'text-sm font-bold text-gray-900 mb-2' :
+                           level === 2 ? 'text-sm font-semibold text-gray-800 mb-1' :
+                           'text-xs font-medium text-gray-700 mb-1'
+        
+        return (
+          <div key={index} className={headerClass}>
+            {title}
+          </div>
+        )
+      }
+      
+      // Detectar listas (líneas que empiezan con -, •, o números)
+      if (trimmedSection.match(/^[-•]\s/m) || trimmedSection.match(/^\d+\.\s/m)) {
+        const items = trimmedSection.split('\n').filter(line => line.trim())
+        return (
+          <div key={index} className="mb-3">
+            <ul className="space-y-1">
+              {items.map((item, itemIndex) => (
+                <li key={itemIndex} className="text-xs text-gray-600 leading-relaxed pl-2">
+                  {item.replace(/^[-•]\s*/, '').replace(/^\d+\.\s*/, '')}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      }
+      
+      // Texto normal
+      return (
+        <div key={index} className="mb-3 text-xs text-gray-700 leading-relaxed">
+          {trimmedSection}
+        </div>
+      )
+    })
+  }
+
+  const getContextStats = () => {
+    if (!accumulatedContext) return { words: 0, chars: 0, sections: 0 }
+    
+    const words = accumulatedContext.split(/\s+/).filter(word => word.length > 0).length
+    const chars = accumulatedContext.length
+    const sections = accumulatedContext.split('\n\n').filter(section => section.trim()).length
+    
+    return { words, chars, sections }
+  }
+
+  const stats = getContextStats()
+
+  return (
+    <div className="p-4 h-full custom-scrollbar overflow-y-auto">
+      {/* Header con estadísticas */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold text-gray-900">
+            Contexto Actual
+          </h3>
+          {contextBuildingMode && (
+            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
+              Construyendo...
+            </span>
+          )}
+        </div>
+        
+        {/* Estadísticas del contexto */}
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          <div className="bg-gray-50 rounded p-2 text-center">
+            <div className="font-medium text-gray-900">{stats.words}</div>
+            <div className="text-gray-500">Palabras</div>
+          </div>
+          <div className="bg-gray-50 rounded p-2 text-center">
+            <div className="font-medium text-gray-900">{stats.chars}</div>
+            <div className="text-gray-500">Caracteres</div>
+          </div>
+          <div className="bg-gray-50 rounded p-2 text-center">
+            <div className="font-medium text-gray-900">{stats.sections}</div>
+            <div className="text-gray-500">Secciones</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Contenido del contexto */}
+      <div className="border border-gray-200 rounded-lg bg-white">
+        <div className="p-3">
+          <div className="text-xs font-medium text-gray-700 mb-2 flex items-center">
+            <FileTextIcon className="w-3 h-3 mr-1" />
+            Información Acumulada
+          </div>
+          
+          <div className="max-h-96 overflow-y-auto custom-scrollbar">
+            {accumulatedContext ? (
+              <div className="space-y-2">
+                {formatContext(accumulatedContext)}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-400">
+                <FileTextIcon className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                <p className="text-xs">No hay contexto disponible</p>
+                <p className="text-xs mt-1">Inicia una conversación para construir contexto</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Historial de mensajes del context building */}
+      {contextMessages && contextMessages.length > 0 && (
+        <div className="mt-4">
+          <div className="text-xs font-medium text-gray-700 mb-2">
+            Historial de Construcción ({(contextMessages || []).length} mensajes)
+          </div>
+          <div className="space-y-2 max-h-32 overflow-y-auto custom-scrollbar">
+            {(contextMessages || []).slice(-3).map((msg, index) => (
+              <div key={index} className="bg-gray-50 rounded p-2 text-xs">
+                <div className="font-medium text-gray-600 mb-1">
+                  Usuario: {(msg.user_message || '').substring(0, 50)}
+                  {(msg.user_message || '').length > 50 && '...'}
+                </div>
+                <div className="text-gray-500">
+                  IA: {(msg.ai_response || '').substring(0, 80)}
+                  {(msg.ai_response || '').length > 80 && '...'}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Componente para el tab de Agentes IA (contenido original)
+const AgentsTab = ({ 
+  agentsWithRealStatus, 
+  expandedAgents, 
+  toggleAgentExpansion, 
+  getStatusClasses, 
+  getIconColor,
+  loadingAiHealth,
+  loadAiHealth,
+  isQuerying,
+  activeConversation,
+  aiHealth,
+  aiAgents
+}) => {
+  return (
+    <div className="p-4 h-full custom-scrollbar overflow-y-auto">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-gray-900">
-          {isMobile ? 'Estado de Agentes IA' : 'Active AIs'}
-        </h2>
+        <h3 className="text-sm font-semibold text-gray-900">
+          Estado de IAs
+        </h3>
         <button
           onClick={() => loadAiHealth()}
           disabled={loadingAiHealth}
           className="text-gray-400 hover:text-gray-600 smooth-transition hover:bg-gray-100 p-1 rounded"
-          title="Refresh AI status"
+          title="Actualizar estado"
         >
           <RefreshCwIcon className={`w-4 h-4 ${loadingAiHealth ? 'animate-spin' : ''}`} />
         </button>
       </div>
 
       {/* Loading State */}
-      {loadingAiHealth && aiAgents.length === 0 && (
+      {loadingAiHealth && (!agentsWithRealStatus || agentsWithRealStatus.length === 0) && (
         <div className="flex items-center justify-center py-8">
           <div className="text-center">
             <LoaderIcon className="w-6 h-6 text-gray-400 animate-spin mx-auto mb-2" />
@@ -121,7 +383,14 @@ const RightSidebar = ({ isMobile = false }) => {
 
       {/* Agents List */}
       <div className="space-y-3">
-        {agentsWithRealStatus.map((agent) => (
+        {!agentsWithRealStatus || agentsWithRealStatus.length === 0 ? (
+          <div className="text-center py-8 text-gray-400">
+            <LoaderIcon className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p className="text-xs">No hay agentes IA disponibles</p>
+            <p className="text-xs mt-1">Verifica la configuración del sistema</p>
+          </div>
+        ) : (
+          agentsWithRealStatus.map((agent) => (
           <div key={agent.id} className="border border-gray-200 rounded-lg bg-white hover-lift smooth-transition">
             {/* Agent Header */}
             <div className="p-3">
@@ -223,7 +492,8 @@ const RightSidebar = ({ isMobile = false }) => {
               </div>
             )}
           </div>
-        ))}
+          ))
+        )}
       </div>
       
       {/* System Performance */}
@@ -250,7 +520,7 @@ const RightSidebar = ({ isMobile = false }) => {
       <div className="mt-6 pt-4 border-t border-gray-200">
         <div className="text-sm font-medium text-gray-700 mb-2">Available Models:</div>
         <div className="space-y-1">
-          {agentsWithRealStatus.map((agent) => (
+          {agentsWithRealStatus && agentsWithRealStatus.map((agent) => (
             <button 
               key={agent.id}
               className={`flex items-center w-full text-left text-xs py-1 smooth-transition hover:bg-blue-50 px-2 rounded ${

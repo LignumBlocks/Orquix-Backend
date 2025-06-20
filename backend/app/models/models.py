@@ -97,8 +97,29 @@ class InteractionEvent(SQLModel, table=True):
     # Relationships
     project: Project = Relationship(back_populates="interaction_events")
     user: User = Relationship(back_populates="interaction_events")
-    ia_responses: List["IAResponse"] = Relationship(back_populates="interaction_event")
     moderated_synthesis: Optional[ModeratedSynthesis] = Relationship()
+
+
+class IAPrompt(SQLModel, table=True):
+    __tablename__ = "ia_prompts"
+    __table_args__ = {'extend_existing': True}
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    deleted_at: Optional[datetime] = Field(default=None, index=True)
+
+    project_id: UUID = Field(foreign_key="projects.id", index=True)
+    context_session_id: Optional[UUID] = Field(default=None, index=True)  # Para relacionar con sesiones de contexto
+    original_query: str = Field(sa_column=Column(Text, nullable=False))
+    generated_prompt: str = Field(sa_column=Column(Text, nullable=False))
+    is_edited: bool = Field(default=False)
+    edited_prompt: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    status: str = Field(default="generated", index=True)  # generated, edited, executed
+    
+    # Relationships
+    project: Project = Relationship()
+    ia_responses: List["IAResponse"] = Relationship(back_populates="ia_prompt")
 
 
 class IAResponse(SQLModel, table=True):
@@ -110,7 +131,7 @@ class IAResponse(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     deleted_at: Optional[datetime] = Field(default=None, index=True)
 
-    interaction_event_id: UUID = Field(foreign_key="interaction_events.id", index=True)
+    ia_prompt_id: UUID = Field(foreign_key="ia_prompts.id", index=True)
     ia_provider_name: str = Field(index=True)
     raw_response_text: str
     latency_ms: int
@@ -118,7 +139,7 @@ class IAResponse(SQLModel, table=True):
     received_at: datetime = Field(default_factory=datetime.utcnow)
 
     # Relationships
-    interaction_event: InteractionEvent = Relationship(back_populates="ia_responses")
+    ia_prompt: IAPrompt = Relationship(back_populates="ia_responses")
 
 
 class ContextChunk(SQLModel, table=True):

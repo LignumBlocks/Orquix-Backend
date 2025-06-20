@@ -97,7 +97,8 @@ async def get_active_session_for_project(
     user_id: UUID
 ) -> Optional[InteractionEvent]:
     """
-    Obtiene la sesión activa para un proyecto y usuario.
+    Obtiene la sesión activa más reciente para un proyecto y usuario.
+    Si hay múltiples sesiones activas, devuelve la más reciente.
     
     Args:
         db: Sesión de base de datos
@@ -105,7 +106,7 @@ async def get_active_session_for_project(
         user_id: ID del usuario
         
     Returns:
-        Sesión activa o None si no existe
+        Sesión activa más reciente o None si no existe
     """
     query = select(InteractionEvent).where(
         InteractionEvent.project_id == project_id,
@@ -113,10 +114,35 @@ async def get_active_session_for_project(
         InteractionEvent.interaction_type == "context_building",
         InteractionEvent.session_status == "active",
         InteractionEvent.deleted_at.is_(None)
-    ).order_by(InteractionEvent.updated_at.desc())
+    ).order_by(InteractionEvent.updated_at.desc()).limit(1)
     
     result = await db.execute(query)
-    return result.scalar_one_or_none()
+    session = result.scalar_one_or_none()
+    
+    # Si hay múltiples sesiones activas, cerrar las anteriores
+    if session:
+        # Buscar y cerrar otras sesiones activas más antiguas
+        other_sessions_query = select(InteractionEvent).where(
+            InteractionEvent.project_id == project_id,
+            InteractionEvent.user_id == user_id,
+            InteractionEvent.interaction_type == "context_building",
+            InteractionEvent.session_status == "active",
+            InteractionEvent.deleted_at.is_(None),
+            InteractionEvent.id != session.id
+        )
+        
+        other_sessions_result = await db.execute(other_sessions_query)
+        other_sessions = other_sessions_result.scalars().all()
+        
+        if other_sessions:
+            logger.warning(f"🔄 Cerrando {len(other_sessions)} sesiones activas antiguas para proyecto {project_id}")
+            for old_session in other_sessions:
+                old_session.session_status = "abandoned"
+                old_session.updated_at = datetime.utcnow()
+            
+            await db.commit()
+    
+    return session
 
 
 async def update_context_session(

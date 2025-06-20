@@ -4,9 +4,9 @@ from app.schemas.query import PromptTemplate
 
 class PromptTemplateManager:
     """
-    Gestor de templates de prompts específicos para cada proveedor de IA.
-    Cada IA tiene su formato óptimo para recibir contexto y preguntas.
-    Versión 2.0: Prompts elaborados para análisis estructurado y meta-análisis.
+    Gestor de templates de prompts para proveedores de IA.
+    Versión 3.0: Template universal optimizado para análisis estructurado y meta-análisis.
+    Usa el mismo prompt de alta calidad para todos los proveedores para garantizar consistencia.
     """
     
     def __init__(self):
@@ -15,8 +15,8 @@ class PromptTemplateManager:
     def _load_templates(self) -> Dict[AIProviderEnum, PromptTemplate]:
         """Carga los templates específicos para cada proveedor"""
         
-        # Template elaborado para OpenAI (GPT-4o-mini)
-        openai_template = PromptTemplate(
+        # Template universal para todos los proveedores de IA (basado en el template optimizado de OpenAI)
+        universal_template = PromptTemplate(
             system_template="""**Instrucción del Sistema:**
 Eres un asistente experto de IA, encargado de proporcionar una respuesta de alta calidad, perspicaz y bien estructurada a la pregunta principal del usuario. Tu respuesta debe tener aproximadamente **600-800 palabras**. Bajo ninguna circunstancia debe exceder las 900 palabras; si la complejidad de la pregunta se aborda completamente en menos palabras, eso es aceptable. Las respuestas que excedan significativamente el límite superior pueden ser truncadas por el sistema Orquix. DEBES considerar cuidadosamente todo el "Contexto Proporcionado" para informar tu respuesta, asegurándote de que sea relevante para la investigación o consulta en curso. Por favor, proporciona tu respuesta en **español**.
 
@@ -69,63 +69,11 @@ Tu respuesta es una entrada crítica para un posterior meta-análisis y síntesi
 ---"""
         )
         
-        # Template elaborado para Anthropic Claude (adaptado)
-        anthropic_template = PromptTemplate(
-            system_template="""Eres Claude, un asistente experto de IA creado por Anthropic. Tu tarea es proporcionar una respuesta analítica estructurada y de alta calidad basándote estrictamente en el contexto proporcionado.
 
-**ESTRUCTURA REQUERIDA (aproximadamente 600-800 palabras):**
-
-### 1. Respuesta Directa y Análisis Central
-- Aborda completamente la pregunta del usuario
-- Proporciona análisis profundo y explicaciones detalladas
-- Resuelve comparaciones o evaluaciones si aplica
-
-### 2. Integración Significativa del Contexto
-- Referencia específicamente el contexto proporcionado
-- Usa frases como "(Según el contexto proporcionado...)" 
-- Explica cómo el contexto informa tu análisis
-
-### 3. Perspectivas Diversas y Matices
-- Explora múltiples facetas del tema si es complejo
-- Presenta puntos de vista matizados
-- **Insight Distintivo:** Ofrece una perspectiva única o conexión menos obvia
-
-### 4. Claridad y Razonamiento Basado en Evidencia
-- Organiza lógicamente con párrafos claros
-- Fundamenta en conocimiento establecido
-- Usa listas con guiones para claridad si es apropiado
-
-### 5. Manejo de Incertidumbre
-- Reconoce limitaciones o debates en el conocimiento
-- No especules más allá de la evidencia disponible
-- Indica áreas de incertidumbre explícitamente
-
-### 6. Indicación de Confianza General
-- Termina con: "**Confianza General:** [Alta/Media/Baja]. Justificación: [razones]"
-
-**Reglas importantes:**
-1. SOLO usa información del contexto proporcionado y conocimiento general establecido
-2. Si no hay información suficiente en el contexto, di explícitamente que no puedes responder completamente
-3. Mantén un tono profesional y analítico
-4. Responde en español
-5. Máximo 900 palabras, óptimo 600-800 palabras
-
-**Contexto disponible:**
-{context}""",
-            
-            user_template="""**Pregunta Principal del Usuario:** {user_question}
-
-Por favor, proporciona una respuesta estructurada siguiendo el formato de 6 secciones especificado arriba, basándote en el contexto proporcionado y tu conocimiento general.""",
-            
-            context_template="""[Fuente: {source_type} - Relevancia: {similarity:.1%}]
-{content_text}
-
-"""
-        )
         
         return {
-            AIProviderEnum.OPENAI: openai_template,
-            AIProviderEnum.ANTHROPIC: anthropic_template
+            AIProviderEnum.OPENAI: universal_template,
+            AIProviderEnum.ANTHROPIC: universal_template  # Usar el mismo template para ambos proveedores
         }
     
     def get_template(self, provider: AIProviderEnum) -> PromptTemplate:

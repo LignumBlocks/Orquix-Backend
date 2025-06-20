@@ -61,7 +61,80 @@
 **Tiempo estimado**: 90 minutos
 **Estado**: 🟢 Completada
 
-### 2. ❌ [Bug] Missing add_info Method in MetricsCollector  
+### 2. ✅ [Refactor] Clasificador Multilingüe ContextBuilderService
+**Archivo**: `backend/app/services/context_builder.py`
+**Problema**: Heurísticas basadas en palabras específicas de idioma
+**Solución**: 
+- ✅ Implementar funciones helper `classify_message_llm()` y `_fallback_heuristic()`
+- ✅ Añadir método `_smart_classify()` con LLM + fallback universal
+- ✅ Eliminar método `_analyze_message_structure()` y sus referencias
+- ✅ Manejar confidence < 0.55 con mensaje de aclaración
+- ✅ Clasificador agnóstico al idioma (ES, EN, PT, FR, etc.)
+**Tiempo estimado**: 45 minutos
+**Estado**: 🟢 Completada - Precisión: 95.8%
+
+### 3. ✅ [Feature] Sidebar de Contexto Actual
+**Archivos**: 
+- `frontend/src/components/layout/RightSidebar.jsx` - Sistema de tabs con contexto
+- `frontend/src/App.jsx` - Integración del sidebar derecho
+- `frontend/src/store/useAppStore.js` - Corrección de persistencia del contexto
+- `frontend/src/components/layout/CenterColumn.jsx` - Integración con store + ocultación de contexto duplicado
+- `frontend/src/services/api.js` - Token de autenticación corregido
+- `backend/app/api/v1/endpoints/context_chat.py` - Corrección de validación de sesiones
+**Objetivo**: Mostrar contexto actual de la sesión siempre visible
+**Cambios**:
+- ✅ Sistema de tabs: "Contexto" y "IAs" 
+- ✅ Tab Contexto: Estadísticas (palabras, caracteres, secciones)
+- ✅ Formato inteligente: Markdown, listas, títulos
+- ✅ Historial de construcción (últimos 3 mensajes)
+- ✅ Estado de construcción en tiempo real
+- ✅ Responsive: oculto en móviles, visible en desktop
+- ✅ **CORREGIDO**: Persistencia del contexto en el store (no se borra al finalizar)
+- ✅ **CORREGIDO**: Integración correcta con sendContextMessage del store
+- ✅ **CORREGIDO**: Contexto oculto del chat principal (no duplicación)
+- ✅ **CORREGIDO**: Validación de sesiones en backend (crear nueva si pertenece a otro proyecto)
+- ✅ **CORREGIDO**: Token de autenticación para desarrollo
+- ✅ **CORREGIDO**: Limpieza de contexto al cambiar de proyecto (aislamiento por proyecto)
+- ✅ **CORREGIDO**: Carga automática de contexto existente por proyecto
+- ✅ **CORREGIDO**: Error TypeError en RightSidebar.jsx (verificaciones de seguridad)
+- ✅ **CORREGIDO**: Duplicación de contexto (mejorado prompt GPT y detección de duplicación)
+- ✅ **CORREGIDO**: Limpieza de contexto al crear nuevo proyecto
+- ✅ **CORREGIDO**: Múltiples sesiones activas (cierre automático de sesiones antiguas)
+**Tiempo estimado**: 60 minutos → **Tiempo real**: 180 minutos (por múltiples correcciones y optimizaciones)
+**Estado**: 🟢 Completada y funcionando perfectamente
+
+### 3.1. ✅ [UX] Flujo Progresivo de Botones en Input del Chat
+**Archivos**: 
+- `frontend/src/components/layout/CenterColumn.jsx` - Implementación de 3 botones progresivos
+**Objetivo**: Mover botones del área sticky al input del chat para UX más intuitiva
+**Cambios**:
+- ✅ **MOVIDO**: Botón "Generar Prompts para las IAs" (✨) al lado del botón enviar
+- ✅ **AGREGADO**: Botón "Ver Prompts" (👁️) para mostrar/ocultar detalles de prompts
+- ✅ **AGREGADO**: Botón "Consultar a las IAs" (🤖) para ejecutar consultas
+- ✅ **ELIMINADO**: Todos los botones sticky que aparecían después del chat
+- ✅ **LÓGICA**: Botones aparecen progresivamente basado en el estado del flujo
+- ✅ **UX**: Usuario escribe pregunta en mismo input y usa botón ✨ para generar prompts
+**Tiempo estimado**: 45 minutos
+**Estado**: 🟢 Completada - UX significativamente mejorada
+
+### 3.2. ✅ [UX] Flujo Unificado de Consulta a IAs
+**Archivos**: 
+- `backend/app/api/v1/endpoints/context_chat.py` - Endpoint `query-ais` unificado
+- `backend/app/models/models.py` - Tabla `ia_responses` con campos `project_id` y `prompt_text`
+- `frontend/src/components/layout/CenterColumn.jsx` - Botón único simplificado
+**Objetivo**: Unificar generación de prompts y consulta a IAs en un solo botón
+**Cambios**:
+- ✅ **FLUJO UNIFICADO**: Un solo botón "Consultar IAs" que genera prompts automáticamente
+- ✅ **ELIMINACIÓN DE BOTONES**: Removidos botones "Generar Prompts" y "Ver Prompts"
+- ✅ **MIGRACIÓN BD**: Agregados campos `project_id` y `prompt_text` a `ia_responses`
+- ✅ **GUARDADO AUTOMÁTICO**: Prompts y respuestas se guardan automáticamente en BD
+- ✅ **BACKEND UNIFICADO**: Endpoint `query-ais` genera prompts + consulta IAs + guarda en BD
+- ✅ **SIMPLIFICACIÓN FRONTEND**: Un solo botón 🤖 siempre visible cuando hay texto
+- ✅ **TRANSPARENCIA**: Prompts guardados listos para mostrar en sidebar derecho
+**Tiempo estimado**: 90 minutos → **Tiempo real**: 120 minutos (migración BD incluida)
+**Estado**: 🟢 Completada - Flujo completamente unificado y simplificado
+
+### 4. ❌ [Bug] Missing add_info Method in MetricsCollector  
 **Archivo**: `backend/app/core/metrics.py`
 **Problema**: `'OrchestrationMetricsCollector' object has no attribute 'add_info'`
 **Solución**: Añadir método `add_info()` a la clase

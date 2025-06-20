@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from uuid import UUID
@@ -10,6 +11,7 @@ from app.core.database import get_db
 from app.api.v1.endpoints.auth import get_current_user
 from app.schemas.auth import SessionUser
 from app.crud import context_session as context_crud
+from app.crud import ia_prompt as ia_prompt_crud
 from app.models.context_session import (
     ContextChatRequest,
     ContextChatResponse,
@@ -18,11 +20,88 @@ from app.models.context_session import (
     ContextSession,
     ContextSessionSummary
 )
+from app.schemas.ia_prompt import (
+    GeneratePromptRequest,
+    GeneratePromptResponse,
+    ExecutePromptRequest,
+    IAPromptResponse,
+    IAPromptUpdate
+)
 from app.services.context_builder import context_builder_service
+from app.services.prompt_templates import PromptTemplateManager
+from app.schemas.ai_response import AIProviderEnum
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+async def _automatically_include_moderator_synthesis(
+    db: AsyncSession,
+    project_id: UUID,
+    user_id: UUID,
+    current_context: str
+) -> str:
+    """
+    Busca automáticamente síntesis del moderador reciente y la incluye en el contexto.
+    
+    Args:
+        db: Sesión de base de datos
+        project_id: ID del proyecto
+        user_id: ID del usuario
+        current_context: Contexto actual acumulado
+        
+    Returns:
+        Contexto mejorado con síntesis del moderador (si está disponible)
+    """
+    try:
+        from sqlalchemy import select, and_, desc
+        from app.models.models import InteractionEvent
+        import json
+        
+        # Buscar la interacción más reciente con síntesis del moderador
+        stmt = select(InteractionEvent).where(
+            and_(
+                InteractionEvent.project_id == project_id,
+                InteractionEvent.user_id == user_id,
+                InteractionEvent.moderator_synthesis_json.isnot(None),
+                InteractionEvent.deleted_at.is_(None)
+            )
+        ).order_by(desc(InteractionEvent.created_at)).limit(1)
+        
+        result = await db.execute(stmt)
+        recent_interaction = result.scalar_one_or_none()
+        
+        if not recent_interaction:
+            # No hay síntesis del moderador disponible
+            logger.debug(f"No se encontró síntesis del moderador para proyecto {project_id}")
+            return current_context
+        
+        # Verificar si la síntesis ya está incluida en el contexto
+        if "🔬 Análisis del Moderador IA" in current_context:
+            logger.debug("Síntesis del moderador ya incluida en el contexto")
+            return current_context
+        
+        # Parsear la síntesis del moderador
+        moderator_data = json.loads(recent_interaction.moderator_synthesis_json)
+        
+        logger.info(f"✨ Incluyendo automáticamente síntesis del moderador - Calidad: {moderator_data.get('quality', 'unknown')}")
+        
+        # Incluir la síntesis en el contexto usando el método del context builder
+        enhanced_context = context_builder_service.include_moderator_synthesis(
+            current_context=current_context,
+            synthesis_text=moderator_data.get('synthesis_text', ''),
+            key_themes=moderator_data.get('key_themes', []),
+            recommendations=moderator_data.get('recommendations', [])
+        )
+        
+        logger.info(f"🧠 Contexto enriquecido automáticamente - Anterior: {len(current_context)} chars, Nuevo: {len(enhanced_context)} chars")
+        
+        return enhanced_context
+        
+    except Exception as e:
+        logger.warning(f"Error incluyendo síntesis del moderador automáticamente: {e}")
+        # En caso de error, devolver el contexto original
+        return current_context
 
 def require_auth(current_user: Optional[SessionUser] = Depends(get_current_user)) -> SessionUser:
     """Require authentication for protected endpoints."""
@@ -69,17 +148,34 @@ async def context_chat(
             logger.info(f"🔍 Buscando sesión existente: {session_uuid} (tipo: {type(session_uuid)})")
             db_session = await context_crud.get_context_session(db, session_uuid)
             logger.info(f"📋 Sesión encontrada: {db_session is not None}")
+            
+            # Validar que la sesión pertenece al proyecto y usuario correctos
             if db_session:
                 logger.info(f"📋 Sesión details: project_id={db_session.project_id}, user_id={db_session.user_id}, status={db_session.session_status}")
                 logger.info(f"📋 Comparación project_id: {db_session.project_id} == {project_id} -> {db_session.project_id == project_id}")
                 logger.info(f"📋 Comparación user_id: {db_session.user_id} == {user_id} -> {db_session.user_id == user_id}")
-            if not db_session or db_session.project_id != project_id or db_session.user_id != user_id:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Sesión de contexto no encontrada"
+                
+                # Si la sesión no pertenece al proyecto/usuario actual, crear una nueva
+                if db_session.project_id != project_id or db_session.user_id != user_id:
+                    logger.warning(f"⚠️ Sesión {session_uuid} pertenece a otro proyecto/usuario. Creando nueva sesión.")
+                    db_session = await context_crud.create_context_session(
+                        db=db,
+                        project_id=project_id,
+                        user_id=user_id,
+                        initial_message=request.user_message
+                    )
+            else:
+                # Sesión no encontrada, crear nueva
+                logger.info(f"🆕 Sesión {session_uuid} no encontrada. Creando nueva sesión.")
+                db_session = await context_crud.create_context_session(
+                    db=db,
+                    project_id=project_id,
+                    user_id=user_id,
+                    initial_message=request.user_message
                 )
         else:
             # Crear nueva sesión
+            logger.info(f"🆕 Creando nueva sesión para proyecto {project_id}")
             db_session = await context_crud.create_context_session(
                 db=db,
                 project_id=project_id,
@@ -90,11 +186,19 @@ async def context_chat(
         # Convertir a modelo Pydantic para trabajar con el servicio
         session = context_crud.convert_interaction_to_context_session(db_session)
         
-        # Procesar mensaje con GPT-3.5
+        # Buscar síntesis del moderador reciente y agregar automáticamente al contexto
+        enhanced_context = await _automatically_include_moderator_synthesis(
+            db=db,
+            project_id=project_id,
+            user_id=user_id,
+            current_context=session.accumulated_context
+        )
+        
+        # Procesar mensaje con GPT-3.5 usando el contexto mejorado
         response = await context_builder_service.process_user_message(
             user_message=request.user_message,
             conversation_history=session.conversation_history,
-            current_context=session.accumulated_context
+            current_context=enhanced_context
         )
         
         # Actualizar session_id con el real
@@ -485,29 +589,54 @@ async def query_ais_individually(
         from app.core.config import settings
         import time
         
-        # Crear instancia del orquestador
-        orchestrator = AIOrchestrator()
+        # PASO 1: Generar prompts automáticamente usando PromptTemplateManager
+        from app.services.prompt_templates import PromptTemplateManager
+        prompt_manager = PromptTemplateManager()
         
-        # Usar el contexto acumulado de la sesión
+        logger.info(f"🎯 Generando prompts automáticamente usando prompt_manager - Sesión: {session_id}")
+        
+        # Generar prompts para cada proveedor
+        prompts_by_provider = {}
         context_text = session_model.accumulated_context or ""
         
-        # Crear AIRequest para el orquestador
-        # Combinar contexto y pregunta en el prompt
-        full_prompt = f"""Contexto:
-{context_text}
-
-Pregunta del usuario:
-{request.final_question}
-
-Por favor, proporciona una respuesta detallada basada en el contexto proporcionado."""
-
-        ai_request = AIRequest(
-            prompt=full_prompt,
-            max_tokens=1200,
-            temperature=0.7,
-            user_id=str(user_id),
-            project_id=str(session.project_id)
-        )
+        for provider in [AIProviderEnum.OPENAI, AIProviderEnum.ANTHROPIC]:
+            try:
+                prompt_dict = prompt_manager.build_prompt_for_provider(
+                    provider=provider,
+                    user_question=request.final_question,
+                    context_text=context_text
+                )
+                # Combinar system y user message en un solo prompt
+                full_prompt = f"{prompt_dict['system_message']}\n\n{prompt_dict['user_message']}"
+                
+                prompts_by_provider[provider.value.lower()] = {
+                    'prompt': full_prompt,
+                    'system_message': prompt_dict['system_message'],
+                    'user_message': prompt_dict['user_message']
+                }
+            except Exception as e:
+                logger.warning(f"Error generando prompt para {provider.value}: {e}")
+                # Fallback básico
+                fallback_prompt = f"Responde la siguiente pregunta en español basándote en el contexto proporcionado:\n\nContexto: {context_text}\n\nPregunta: {request.final_question}"
+                prompts_by_provider[provider.value.lower()] = {
+                    'prompt': fallback_prompt,
+                    'system_message': "Eres un asistente útil que responde en español.",
+                    'user_message': fallback_prompt
+                }
+        
+        # Crear estructura compatible con el código existente
+        prompts_result = {
+            'prompts_by_provider': prompts_by_provider,
+            'context_summary': context_text[:500] + "..." if len(context_text) > 500 else context_text
+        }
+        
+        logger.info(f"✅ Prompts generados para {len(prompts_by_provider)} proveedores")
+        
+        # PASO 2: Crear instancia del orquestador para enviar prompts
+        orchestrator = AIOrchestrator()
+        
+        # Usar los prompts generados en lugar de crear uno genérico
+        prompts_by_provider = prompts_result.get('prompts_by_provider', {})
         
         # Ejecutar consultas individuales a las IAs
         start_time = time.time()
@@ -516,57 +645,122 @@ Por favor, proporciona una respuesta detallada basada en el contexto proporciona
         # Obtener proveedores disponibles
         available_providers = orchestrator.get_available_providers()
         
-        try:
-            # Consultar cada proveedor individualmente
-            for provider in available_providers:
-                logger.info(f"🤖 Consultando {provider.value.title()}...")
-                provider_start = time.time()
+        # Consultar cada proveedor individualmente usando sus prompts específicos
+        for provider in available_providers:
+            provider_name = provider.value.lower()
+            logger.info(f"🤖 Consultando {provider.value.title()}...")
+            provider_start = time.time()
+            
+            # Obtener el prompt específico para este proveedor
+            provider_prompt_data = prompts_by_provider.get(provider_name, {})
+            if not provider_prompt_data:
+                logger.warning(f"⚠️ No se encontró prompt para {provider.value.title()}, saltando...")
+                continue
+            
+            prompt_text = provider_prompt_data.get('prompt', '')
+            if not prompt_text:
+                logger.warning(f"⚠️ Prompt vacío para {provider.value.title()}, saltando...")
+                continue
+            
+            try:
+                # Crear AIRequest específico para este proveedor
+                ai_request = AIRequest(
+                    prompt=prompt_text,
+                    max_tokens=1200,
+                    temperature=0.7,
+                    user_id=str(user_id),
+                    project_id=str(session.project_id)
+                )
                 
-                try:
-                    ai_response = await orchestrator.generate_single_response(
-                        request=ai_request,
-                        provider=provider
-                    )
-                    provider_time = time.time() - provider_start
+                ai_response = await orchestrator.generate_single_response(
+                    request=ai_request,
+                    provider=provider
+                )
+                provider_time = time.time() - provider_start
+                
+                # Determinar modelo según el proveedor
+                model = "gpt-4o-mini" if provider == AIProviderEnum.OPENAI else "claude-3-haiku-20240307"
+                
+                if ai_response.status.value == "success":
+                    # PASO 3: Guardar prompt y respuesta en BD (sin bloquear si falla)
+                    try:
+                        await save_ia_response_with_prompt(
+                            db=db,
+                            project_id=session.project_id,
+                            provider=provider_name,
+                            prompt_text=prompt_text,
+                            response_text=ai_response.response_text,
+                            latency_ms=int(provider_time * 1000),
+                            user_question=request.final_question
+                        )
+                    except Exception as save_error:
+                        logger.warning(f"⚠️ Error guardando respuesta de {provider_name}: {save_error}")
                     
-                    # Determinar modelo según el proveedor
-                    model = "gpt-4o-mini" if provider == AIProviderEnum.OPENAI else "claude-3-haiku-20240307"
-                    
-                    if ai_response.status.value == "success":
-                        individual_responses.append({
-                            "provider": provider.value.lower(),
-                            "model": model,
-                            "content": ai_response.response_text,
-                            "processing_time_ms": int(provider_time * 1000),
-                            "success": True,
-                            "timestamp": datetime.utcnow().isoformat()
-                        })
-                        logger.info(f"✅ {provider.value.title()} respondió en {provider_time:.2f}s")
-                    else:
-                        individual_responses.append({
-                            "provider": provider.value.lower(),
-                            "model": model,
-                            "error": ai_response.error_message or "Error desconocido",
-                            "processing_time_ms": int(provider_time * 1000),
-                            "success": False,
-                            "timestamp": datetime.utcnow().isoformat()
-                        })
-                        logger.error(f"❌ Error en {provider.value.title()}: {ai_response.error_message}")
-                    
-                except Exception as e:
-                    provider_time = time.time() - provider_start
-                    logger.error(f"❌ Error en {provider.value.title()}: {e}")
                     individual_responses.append({
-                        "provider": provider.value.lower(),
-                        "model": "gpt-4o-mini" if provider == AIProviderEnum.OPENAI else "claude-3-haiku-20240307",
-                        "error": str(e),
+                        "provider": provider_name,
+                        "model": model,
+                        "content": ai_response.response_text,
+                        "processing_time_ms": int(provider_time * 1000),
+                        "success": True,
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "prompt_used": prompt_text[:200] + "..." if len(prompt_text) > 200 else prompt_text
+                    })
+                    logger.info(f"✅ {provider.value.title()} respondió en {provider_time:.2f}s")
+                else:
+                    # Guardar error también (sin bloquear si falla)
+                    try:
+                        await save_ia_response_with_prompt(
+                            db=db,
+                            project_id=session.project_id,
+                            provider=provider_name,
+                            prompt_text=prompt_text,
+                            response_text="",
+                            latency_ms=int(provider_time * 1000),
+                            user_question=request.final_question,
+                            error_message=ai_response.error_message
+                        )
+                    except Exception as save_error:
+                        logger.warning(f"⚠️ Error guardando error de {provider_name}: {save_error}")
+                    
+                    individual_responses.append({
+                        "provider": provider_name,
+                        "model": model,
+                        "error": ai_response.error_message or "Error desconocido",
                         "processing_time_ms": int(provider_time * 1000),
                         "success": False,
-                        "timestamp": datetime.utcnow().isoformat()
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "prompt_used": prompt_text[:200] + "..." if len(prompt_text) > 200 else prompt_text
                     })
-            
-        except Exception as e:
-            logger.error(f"❌ Error general consultando IAs: {e}")
+                    logger.error(f"❌ Error en {provider.value.title()}: {ai_response.error_message}")
+                
+            except Exception as e:
+                provider_time = time.time() - provider_start
+                logger.error(f"❌ Error en {provider.value.title()}: {e}")
+                
+                # Guardar error en BD (sin bloquear si falla)
+                try:
+                    await save_ia_response_with_prompt(
+                        db=db,
+                        project_id=session.project_id,
+                        provider=provider_name,
+                        prompt_text=prompt_text,
+                        response_text="",
+                        latency_ms=int(provider_time * 1000),
+                        user_question=request.final_question,
+                        error_message=str(e)
+                    )
+                except Exception as save_error:
+                    logger.warning(f"⚠️ Error guardando excepción de {provider_name}: {save_error}")
+                
+                individual_responses.append({
+                    "provider": provider_name,
+                    "model": "gpt-4o-mini" if provider == AIProviderEnum.OPENAI else "claude-3-haiku-20240307",
+                    "error": str(e),
+                    "processing_time_ms": int(provider_time * 1000),
+                    "success": False,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "prompt_used": prompt_text[:200] + "..." if len(prompt_text) > 200 else prompt_text
+                })
         
         total_time = time.time() - start_time
         successful_responses = [r for r in individual_responses if r.get("success", False)]
@@ -599,7 +793,9 @@ Por favor, proporciona una respuesta detallada basada en el contexto proporciona
             "total_processing_time_ms": int(total_time * 1000),
             "successful_responses": len(successful_responses),
             "total_responses": len(individual_responses),
-            "context_used": context_text[:200] + "..." if len(context_text) > 200 else context_text,
+            "prompts_generated": prompts_result,
+            "prompts_saved_to_db": True,
+            "context_used": prompts_result.get('context_summary', '')[:200] + "..." if len(prompts_result.get('context_summary', '')) > 200 else prompts_result.get('context_summary', ''),
             "timestamp": datetime.utcnow().isoformat()
         }
         
@@ -988,4 +1184,320 @@ async def synthesize_ai_responses(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error ejecutando síntesis: {str(e)}"
-        ) 
+        )
+
+
+# ================================
+# NUEVOS ENDPOINTS PARA FLUJO DE PROMPTS
+# ================================
+
+@router.post("/projects/{project_id}/generate-prompt")
+async def generate_prompt_for_project(
+    project_id: UUID,
+    request: GeneratePromptRequest,
+    current_user: SessionUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db)
+) -> GeneratePromptResponse:
+    """
+    Genera un prompt para las IAs basado en la consulta del usuario.
+    Este es el primer paso del flujo: generar -> editar (opcional) -> ejecutar
+    """
+    try:
+        logger.info(f"🎯 Generando prompt para proyecto {project_id} - Query: {request.query[:100]}...")
+        
+        # Obtener contexto si hay session_id
+        context_data = ""
+        if request.context_session_id:
+            db_session = await context_crud.get_context_session(db, request.context_session_id)
+            if db_session:
+                session_model = context_crud.convert_interaction_to_context_session(db_session)
+                context_data = session_model.accumulated_context
+                logger.info(f"📋 Usando contexto de sesión {request.context_session_id} - {len(context_data)} chars")
+        
+        # Generar prompt usando el template universal
+        from app.services.prompt_templates import PromptTemplateManager
+        from app.schemas.ai_response import AIProviderEnum
+        
+        prompt_manager = PromptTemplateManager()
+        prompt_data = prompt_manager.build_prompt_for_provider(
+            provider=AIProviderEnum.OPENAI,  # Usamos OpenAI como referencia (ambos usan el mismo template)
+            user_question=request.query,
+            context_text=context_data
+        )
+        
+        # Combinar system y user message en un solo prompt
+        generated_prompt = f"{prompt_data['system_message']}\n\n{prompt_data['user_message']}"
+        
+        # Guardar el prompt en la base de datos
+        ia_prompt = await ia_prompt_crud.create_ia_prompt(
+            db=db,
+            project_id=project_id,
+            context_session_id=request.context_session_id,
+            original_query=request.query,
+            generated_prompt=generated_prompt
+        )
+        
+        logger.info(f"✅ Prompt generado y guardado - ID: {ia_prompt.id}, Longitud: {len(generated_prompt)} chars")
+        
+        return GeneratePromptResponse(
+            prompt_id=ia_prompt.id,
+            original_query=ia_prompt.original_query,
+            generated_prompt=ia_prompt.generated_prompt,
+            project_id=ia_prompt.project_id,
+            context_session_id=ia_prompt.context_session_id,
+            status=ia_prompt.status,
+            created_at=ia_prompt.created_at
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Error generando prompt: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generando prompt: {str(e)}"
+        )
+
+
+@router.get("/prompts/{prompt_id}")
+async def get_prompt_by_id(
+    prompt_id: UUID,
+    current_user: SessionUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db)
+) -> IAPromptResponse:
+    """
+    Obtiene un prompt específico por su ID, incluyendo sus respuestas de IA si las tiene.
+    """
+    try:
+        ia_prompt = await ia_prompt_crud.get_ia_prompt_by_id(db, prompt_id)
+        if not ia_prompt:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Prompt no encontrado"
+            )
+        
+        return IAPromptResponse.from_orm(ia_prompt)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo prompt {prompt_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error obteniendo prompt: {str(e)}"
+        )
+
+
+@router.put("/prompts/{prompt_id}")
+async def update_prompt(
+    prompt_id: UUID,
+    request: IAPromptUpdate,
+    current_user: SessionUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db)
+) -> IAPromptResponse:
+    """
+    Actualiza un prompt con una versión editada por el usuario.
+    """
+    try:
+        logger.info(f"✏️ Actualizando prompt {prompt_id} con versión editada")
+        
+        updated_prompt = await ia_prompt_crud.update_ia_prompt(
+            db=db,
+            prompt_id=prompt_id,
+            edited_prompt=request.edited_prompt
+        )
+        
+        if not updated_prompt:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Prompt no encontrado"
+            )
+        
+        logger.info(f"✅ Prompt {prompt_id} actualizado - Nuevo status: {updated_prompt.status}")
+        
+        return IAPromptResponse.from_orm(updated_prompt)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error actualizando prompt {prompt_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error actualizando prompt: {str(e)}"
+        )
+
+
+@router.post("/prompts/{prompt_id}/execute")
+async def execute_prompt(
+    prompt_id: UUID,
+    request: ExecutePromptRequest,
+    current_user: SessionUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Ejecuta un prompt (original o editado) consultando a las IAs.
+    Este es el paso final del flujo: generar -> editar (opcional) -> ejecutar
+    """
+    try:
+        logger.info(f"🚀 Ejecutando prompt {prompt_id} - Usar versión editada: {request.use_edited_version}")
+        
+        # Obtener el prompt
+        ia_prompt = await ia_prompt_crud.get_ia_prompt_by_id(db, prompt_id)
+        if not ia_prompt:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Prompt no encontrado"
+            )
+        
+        # Determinar qué prompt usar
+        if request.use_edited_version and ia_prompt.edited_prompt:
+            prompt_to_use = ia_prompt.edited_prompt
+            logger.info(f"📝 Usando versión editada del prompt")
+        else:
+            prompt_to_use = ia_prompt.generated_prompt
+            logger.info(f"🎯 Usando versión original del prompt")
+        
+        # Ejecutar consultas a las IAs
+        from app.services.ai_orchestrator import AIOrchestrator
+        from app.schemas.ai_response import AIProviderEnum, AIRequest
+        import time
+        
+        # Crear instancia del orquestador
+        orchestrator = AIOrchestrator()
+        
+        responses = {}
+        providers = [AIProviderEnum.OPENAI, AIProviderEnum.ANTHROPIC]
+        
+        for provider in providers:
+            try:
+                logger.info(f"🤖 Consultando {provider.value}...")
+                start_time = time.time()
+                
+                # Crear request para el proveedor
+                ai_request = AIRequest(
+                    messages=[{"role": "user", "content": prompt_to_use}],
+                    provider=provider
+                )
+                
+                # Consultar al proveedor
+                response = await orchestrator.generate_single_response(
+                    ai_request, provider
+                )
+                
+                processing_time = int((time.time() - start_time) * 1000)
+                
+                # Guardar respuesta en la base de datos
+                ia_response = await ia_prompt_crud.create_ia_response(
+                    db=db,
+                    ia_prompt_id=ia_prompt.id,
+                    provider=provider.value,
+                    response_text=response.response_text if response.response_text else "Error en la respuesta",
+                    status=response.status.value,
+                    latency_ms=response.latency_ms,
+                    error_message=response.error_message
+                )
+                
+                responses[provider.value] = {
+                    "id": str(ia_response.id),
+                    "provider": provider.value,
+                    "status": response.status.value,
+                    "response_text": response.response_text,
+                    "latency_ms": response.latency_ms,
+                    "error_message": response.error_message,
+                    "success": response.status.value == "success",
+                    "content": response.response_text,
+                    "processing_time_ms": processing_time
+                }
+                
+                if response.status.value == "success":
+                    logger.info(f"✅ {provider.value} respondió en {processing_time}ms")
+                else:
+                    logger.warning(f"⚠️ {provider.value} falló: {response.error_message}")
+                
+            except Exception as e:
+                processing_time = int((time.time() - start_time) * 1000) if 'start_time' in locals() else 0
+                logger.error(f"❌ Error consultando {provider.value}: {str(e)}")
+                responses[provider.value] = {
+                    "provider": provider.value,
+                    "status": "error",
+                    "error_message": f"Error interno: {str(e)}",
+                    "success": False,
+                    "processing_time_ms": processing_time
+                }
+        
+        successful_count = len([r for r in responses.values() if r.get("success", False)])
+        
+        # Commit de todas las respuestas guardadas
+        await db.commit()
+        
+        # Marcar prompt como ejecutado
+        await ia_prompt_crud.mark_prompt_as_executed(db, prompt_id)
+        
+        # Preparar respuesta
+        response_data = {
+            "prompt_id": str(prompt_id),
+            "prompt_used": prompt_to_use,
+            "used_edited_version": request.use_edited_version,
+            "responses": responses,
+            "successful_responses": successful_count,
+            "total_responses": len(responses),
+            "executed_at": datetime.utcnow().isoformat()
+        }
+        
+        logger.info(f"✅ Prompt ejecutado - {successful_count}/{len(responses)} respuestas exitosas")
+        
+        return response_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error ejecutando prompt {prompt_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error ejecutando prompt: {str(e)}"
+        )
+
+
+# Función auxiliar para guardar respuestas de IA con sus prompts
+async def save_ia_response_with_prompt(
+    db: AsyncSession,
+    project_id: UUID,
+    provider: str,
+    prompt_text: str,
+    response_text: str,
+    latency_ms: int,
+    user_question: str,
+    error_message: str = None
+) -> None:
+    """
+    Guarda una respuesta de IA junto con su prompt en la base de datos.
+    """
+    try:
+        from app.models.models import IAResponse
+        from uuid import uuid4
+        from datetime import datetime
+        
+        # Crear registro de respuesta IA con prompt
+        ia_response = IAResponse(
+            id=uuid4(),
+            project_id=project_id,
+            prompt_text=prompt_text,
+            ia_provider_name=provider,
+            raw_response_text=response_text or "",
+            latency_ms=latency_ms,
+            error_message=error_message,
+            received_at=datetime.utcnow(),
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        
+        db.add(ia_response)
+        await db.commit()
+        
+        logger.info(f"💾 Respuesta de {provider} guardada en BD con prompt (longitud: {len(prompt_text)} chars)")
+        
+    except Exception as e:
+        logger.error(f"❌ Error guardando respuesta de {provider} en BD: {e}")
+        await db.rollback()
+        # No re-raise la excepción para no romper el flujo principal
+
+
+ 

@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
 import openai
@@ -13,6 +13,116 @@ from app.models.context_session import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Funciones helper fuera de la clase
+async def classify_message_llm(
+    client: openai.AsyncOpenAI,
+    user_message: str,
+    model: str = "gpt-3.5-turbo"
+) -> Tuple[str, float]:
+    """
+    Clasifica un mensaje usando LLM de forma agnóstica al idioma.
+    
+    Args:
+        client: Cliente de OpenAI
+        user_message: Mensaje del usuario
+        model: Modelo a usar
+        
+    Returns:
+        Tuple con (message_type, confidence)
+    """
+    prompt = (
+        "You are a language-agnostic classifier. "
+        "Return ONLY valid JSON with keys: "
+        "message_type ('question' or 'information') and confidence (0-1). "
+        f"Text: «{user_message.strip()}»"
+    )
+    try:
+        chat = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=50,
+            response_format={"type": "json_object"}
+        )
+        data = json.loads(chat.choices[0].message.content)
+        if data["message_type"] in ("question", "information"):
+            return data["message_type"], float(data["confidence"])
+    except Exception as e:
+        logger.debug(f"LLM classify failed → fallback: {e}")
+    return _fallback_heuristic(user_message)
+
+def _fallback_heuristic(msg: str) -> Tuple[str, float]:
+    """
+    Heurística universal de fallback para clasificación.
+    
+    Args:
+        msg: Mensaje a clasificar
+        
+    Returns:
+        Tuple con (message_type, confidence)
+    """
+    text = msg.strip()
+    if text.endswith("?") or (text.count("?") == 1 and len(text) < 80):
+        return "question", 0.6
+    if len(text.split()) > 15:
+        return "information", 0.6
+    return "question", 0.5
+
+# Funciones helper fuera de la clase
+async def classify_message_llm(
+    client: openai.AsyncOpenAI,
+    user_message: str,
+    model: str = "gpt-3.5-turbo"
+) -> Tuple[str, float]:
+    """
+    Clasifica un mensaje usando LLM de forma agnóstica al idioma.
+    
+    Args:
+        client: Cliente de OpenAI
+        user_message: Mensaje del usuario
+        model: Modelo a usar
+        
+    Returns:
+        Tuple con (message_type, confidence)
+    """
+    prompt = (
+        "You are a language-agnostic classifier. "
+        "Return ONLY valid JSON with keys: "
+        "message_type ('question' or 'information') and confidence (0-1). "
+        f"Text: «{user_message.strip()}»"
+    )
+    try:
+        chat = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=50,
+            response_format={"type": "json_object"}
+        )
+        data = json.loads(chat.choices[0].message.content)
+        if data["message_type"] in ("question", "information"):
+            return data["message_type"], float(data["confidence"])
+    except Exception as e:
+        logger.debug(f"LLM classify failed → fallback: {e}")
+    return _fallback_heuristic(user_message)
+
+def _fallback_heuristic(msg: str) -> Tuple[str, float]:
+    """
+    Heurística universal de fallback para clasificación.
+    
+    Args:
+        msg: Mensaje a clasificar
+        
+    Returns:
+        Tuple con (message_type, confidence)
+    """
+    text = msg.strip()
+    if text.endswith("?") or (text.count("?") == 1 and len(text) < 80):
+        return "question", 0.6
+    if len(text.split()) > 15:
+        return "information", 0.6
+    return "question", 0.5
 
 class ContextBuilderService:
     """
@@ -27,6 +137,30 @@ class ContextBuilderService:
         self.model = "gpt-3.5-turbo"
         self.temperature = 0.3  # Más determinístico para consistencia
         self.max_tokens = 500   # Respuestas concisas
+    
+    async def _smart_classify(self, user_message: str) -> Tuple[str, float]:
+        """
+        Clasifica un mensaje usando LLM multilingüe con fallback universal.
+        
+        Args:
+            user_message: Mensaje del usuario
+            
+        Returns:
+            Tuple con (message_type, confidence)
+        """
+        return await classify_message_llm(self.client, user_message, self.model)
+    
+    async def _smart_classify(self, user_message: str) -> Tuple[str, float]:
+        """
+        Clasifica un mensaje usando LLM multilingüe con fallback universal.
+        
+        Args:
+            user_message: Mensaje del usuario
+            
+        Returns:
+            Tuple con (message_type, confidence)
+        """
+        return await classify_message_llm(self.client, user_message, self.model)
     
     async def process_user_message(
         self,
@@ -46,6 +180,22 @@ class ContextBuilderService:
             ContextChatResponse con la respuesta y metadatos
         """
         try:
+            # Clasificar el mensaje con el nuevo método
+            message_type, confidence = await self._smart_classify(user_message)
+            is_question = message_type == "question"
+            
+            # Si la confianza es baja, pedir aclaración
+            if confidence < 0.55:
+                return ContextChatResponse(
+                    session_id=uuid4(),
+                    ai_response="No estoy seguro de si eso es una pregunta o información. ¿Podrías aclararlo o aportar más detalles?",
+                    message_type="question",
+                    accumulated_context=current_context,
+                    suggestions=["Reformula tu mensaje", "Sé más específico", "Agrega más contexto"],
+                    context_elements_count=self._count_context_elements(current_context),
+                    suggested_final_question=None
+                )
+            
             # Construir prompt para GPT-3.5
             system_prompt = self._build_system_prompt()
             messages = self._build_conversation_messages(
@@ -74,7 +224,7 @@ class ContextBuilderService:
             
             # Actualizar contexto acumulado si hay nueva información
             updated_context = current_context
-            if message_type == "information" and context_update:
+            if context_update and context_update.strip():
                 updated_context = self._update_accumulated_context(
                     current_context, context_update
                 )
@@ -102,10 +252,10 @@ class ContextBuilderService:
             
         except openai.APIError as e:
             logger.error(f"Error de API de OpenAI: {e}")
-            return self._create_fallback_response(user_message, current_context)
+            return await self._create_fallback_response(user_message, current_context)
         except openai.RateLimitError as e:
             logger.error(f"Rate limit excedido en OpenAI: {e}")
-            return self._create_fallback_response(user_message, current_context)
+            return await self._create_fallback_response(user_message, current_context)
         except json.JSONDecodeError as e:
             logger.warning(f"Error parsing GPT-3.5 response, reintentando con fallback: {e}")
             # Intentar una segunda vez con un prompt más simple
@@ -113,10 +263,10 @@ class ContextBuilderService:
                 simple_response = await self._simple_gpt_call(user_message, current_context)
                 return simple_response
             except Exception:
-                return self._create_fallback_response(user_message, current_context)
+                return await self._create_fallback_response(user_message, current_context)
         except Exception as e:
             logger.error(f"Error inesperado en context builder: {e}")
-            return self._create_fallback_response(user_message, current_context)
+            return await self._create_fallback_response(user_message, current_context)
     
     def _build_system_prompt(self) -> str:
         """Construye el prompt del sistema para GPT-3.5."""
@@ -128,13 +278,53 @@ Tu rol es:
    - PREGUNTANDO algo (necesita información/clarificación)
    - APORTANDO información (agregando al contexto del proyecto)
 
-2. ACUMULAR información relevante para el contexto del proyecto
+2. EXTRAER información útil de CUALQUIER mensaje (tanto preguntas como declaraciones)
 
-3. GUIAR al usuario para obtener información completa y útil
+3. PRESERVAR la información completa y específica del mensaje del usuario
 
-4. SUGERIR FINALIZACIÓN cuando el contexto esté completo con una pregunta específica
+4. GUIAR al usuario para obtener información completa y útil
 
-INSTRUCCIONES IMPORTANTES:
+5. SUGERIR FINALIZACIÓN cuando el contexto esté completo con una pregunta específica
+
+INSTRUCCIONES CRÍTICAS PARA context_update:
+- SIEMPRE extrae información útil del mensaje, incluso si es una pregunta
+- Las PREGUNTAS pueden contener información valiosa: objetivos, restricciones, mercados, presupuestos, etc.
+- En "context_update" incluye TODA la información relevante del mensaje actual
+- PRESERVA los detalles específicos: números, fechas, ubicaciones, objetivos, restricciones
+- NO resumas excesivamente - mantén la información completa y descriptiva
+- NUNCA repitas información que ya está en el contexto existente
+- SOLO agrega información NUEVA y DIFERENTE
+- Sé específico y detallado: incluye todos los hechos importantes del usuario
+- Si no hay información nueva, deja "context_update" vacío
+
+REGLAS ESTRICTAS PARA EVITAR DUPLICACIÓN:
+- Si el contexto ya menciona "startup de software dental", NO vuelvas a mencionarlo
+- Si el contexto ya dice "fase beta", NO lo repitas
+- SOLO agrega los elementos NUEVOS del mensaje actual
+- Usa frases concisas y directas sin redundancia
+- Evita repetir el tipo de empresa, industria o estado si ya están en el contexto
+
+EJEMPLOS DE EXTRACCIÓN SIN DUPLICACIÓN:
+
+CORRECTO - Contexto existente + mensaje nuevo:
+Contexto: "Startup que ofrece software de gestión para clínicas dentales, actualmente en fase beta"
+Usuario: "Estamos considerando campañas en Google Ads pero no sabemos cuánto invertir"
+context_update: "Considerando campañas en Google Ads. Incertidumbre sobre cantidad de inversión publicitaria."
+
+INCORRECTO - Con duplicación:
+context_update: "Considerando campañas en Google Ads para la startup de software de gestión para clínicas dentales en fase beta"
+
+CORRECTO - Pregunta con información valiosa:
+Usuario: "¿Qué estrategia de marketing me permite alcanzar 50 clientes en México y Colombia con un CAC ≤ 150 USD y presupuesto de 2,000 USD/mes?"
+message_type: "question"
+context_update: "Objetivo: 50 clientes de pago. Mercados: México y Colombia. CAC máximo: 150 USD. Presupuesto mensual: 2,000 USD. Enfoque: estrategia de marketing"
+
+CORRECTO - Declaración informativa:
+Usuario: "Tengo una startup que ofrece software de gestión para clínicas dentales. Aún estamos en fase beta"
+message_type: "information"
+context_update: "Startup que ofrece software de gestión para clínicas dentales, actualmente en fase beta"
+
+INSTRUCCIONES GENERALES:
 - Sé conversacional y natural
 - Haz preguntas específicas para obtener detalles útiles
 - Reconoce cuando el usuario aporta información valiosa
@@ -146,7 +336,7 @@ Responde SIEMPRE en este formato JSON válido:
 {
   "message_type": "question|information|ready",
   "response_text": "Tu respuesta conversacional al usuario",
-  "context_update": "Información específica a agregar al contexto (solo si message_type es 'information')",
+  "context_update": "SOLO información NUEVA del mensaje actual, sin repetir lo que ya está en el contexto",
   "suggestions": ["Sugerencia 1", "Sugerencia 2"],
   "suggested_final_question": "Pregunta específica sugerida para las IAs principales (solo si message_type es 'ready')"
 }
@@ -191,36 +381,168 @@ CONTEXTO ACTUAL DEL PROYECTO:
         return messages
     
     def _update_accumulated_context(self, current_context: str, new_info: str) -> str:
-        """Actualiza el contexto acumulado con nueva información."""
-        if not current_context.strip():
+        """
+        Actualiza el contexto acumulado con nueva información.
+        Evita duplicación pero preserva información importante.
+        """
+        if not new_info or not new_info.strip():
+            return current_context
+            
+        if not current_context or not current_context.strip():
             return new_info.strip()
         
-        # Evitar duplicación
-        if new_info.strip() in current_context:
+        # Normalizar textos para comparación
+        current_lower = current_context.lower().strip()
+        new_lower = new_info.lower().strip()
+        
+        # Si la nueva información es idéntica o está completamente contenida, no agregar
+        if new_lower == current_lower or new_lower in current_lower:
+            logger.debug(f"Información duplicada detectada (contenida): {new_lower[:50]}...")
             return current_context
         
-        # Agregar nueva información
-        return f"{current_context}\n\n• {new_info.strip()}"
+        # Verificar si hay superposición significativa de palabras (>70%)
+        current_words = set(current_lower.split())
+        new_words = set(new_lower.split())
+        
+        if len(new_words) > 0:
+            overlap_ratio = len(current_words.intersection(new_words)) / len(new_words)
+            
+            # Si hay mucha superposición, verificar si la nueva info es más completa
+            if overlap_ratio > 0.7:
+                # Si la nueva información es más larga y específica, reemplazar
+                if len(new_info) > len(current_context) * 1.2:
+                    logger.debug(f"Reemplazando contexto con versión más completa")
+                    return new_info.strip()
+                # Si es similar o más corta, mantener la actual
+                else:
+                    logger.debug(f"Información similar detectada, manteniendo contexto actual")
+                    return current_context
+        
+        # Detectar duplicación semántica específica
+        # Verificar frases comunes que podrían estar duplicadas
+        duplicate_patterns = [
+            r'startup.*software.*gestión.*clínicas.*dentales',
+            r'fase.*beta',
+            r'software.*gestión.*clínicas.*dentales',
+            r'clínicas.*dentales.*fase.*beta'
+        ]
+        
+        import re
+        for pattern in duplicate_patterns:
+            # Si el patrón aparece en ambos textos, es probable duplicación
+            if re.search(pattern, current_lower) and re.search(pattern, new_lower):
+                # Extraer solo las partes nuevas
+                logger.debug(f"Patrón duplicado detectado: {pattern}")
+                
+                # Intentar extraer solo información nueva
+                new_parts = []
+                new_sentences = new_info.split('.')
+                
+                for sentence in new_sentences:
+                    sentence = sentence.strip()
+                    if sentence and not any(re.search(pattern, sentence.lower()) for pattern in duplicate_patterns):
+                        # Esta oración no contiene patrones duplicados
+                        if sentence.lower() not in current_lower:
+                            new_parts.append(sentence)
+                
+                if new_parts:
+                    # Combinar solo las partes nuevas
+                    new_content = '. '.join(new_parts)
+                    if current_context.endswith('.'):
+                        return f"{current_context} {new_content.strip()}"
+                    else:
+                        return f"{current_context}. {new_content.strip()}"
+                else:
+                    # No hay partes nuevas, mantener el contexto actual
+                    logger.debug("No se encontraron partes nuevas después de filtrar duplicación")
+                    return current_context
+        
+        # Combinar información complementaria si no hay duplicación detectada
+        # Usar punto para separar información distinta
+        if current_context.endswith('.'):
+            return f"{current_context} {new_info.strip()}"
+        else:
+            return f"{current_context}. {new_info.strip()}"
+    
+    def include_moderator_synthesis(self, current_context: str, synthesis_text: str, key_themes: list = None, recommendations: list = None) -> str:
+        """
+        Incluye la síntesis del moderador en el contexto acumulado.
+        
+        Args:
+            current_context: Contexto actual acumulado
+            synthesis_text: Texto de síntesis del moderador
+            key_themes: Temas clave identificados por el moderador (opcional)
+            recommendations: Recomendaciones del moderador (opcional)
+            
+        Returns:
+            Contexto actualizado con la síntesis del moderador
+        """
+        if not synthesis_text.strip():
+            return current_context
+        
+        # Evitar duplicación - verificar si ya está incluida
+        if "🔬 Análisis del Moderador IA" in current_context:
+            logger.debug("Síntesis del moderador ya incluida en el contexto")
+            return current_context
+        
+        # Crear resumen estructurado de la síntesis
+        moderator_section = "## 🔬 Análisis del Moderador IA\n\n"
+        
+        # Incluir temas clave si están disponibles
+        if key_themes:
+            moderator_section += "**Temas Clave Identificados:**\n"
+            for theme in key_themes[:3]:  # Limitar a 3 temas principales
+                moderator_section += f"• {theme}\n"
+            moderator_section += "\n"
+        
+        # Incluir recomendaciones si están disponibles
+        if recommendations:
+            moderator_section += "**Recomendaciones Principales:**\n"
+            for rec in recommendations[:3]:  # Limitar a 3 recomendaciones principales
+                moderator_section += f"• {rec}\n"
+            moderator_section += "\n"
+        
+        # Incluir síntesis (limitada para no abrumar el contexto)
+        synthesis_preview = synthesis_text[:800] + "..." if len(synthesis_text) > 800 else synthesis_text
+        moderator_section += f"**Síntesis del Análisis:**\n{synthesis_preview}"
+        
+        # Combinar con el contexto existente
+        if current_context.strip():
+            return f"{current_context}\n\n{moderator_section}"
+        else:
+            return moderator_section
     
     def _count_context_elements(self, context: str) -> int:
-        """Cuenta los elementos en el contexto acumulado."""
+        """Cuenta los elementos de contexto separados por líneas."""
         if not context.strip():
             return 0
         
-        # Contar líneas que comienzan con bullet points o que tienen contenido sustancial
-        lines = [line.strip() for line in context.split('\n') if line.strip()]
-        elements = [line for line in lines if line.startswith('•') or len(line) > 10]
+        # Contar párrafos no vacíos
+        elements = [line.strip() for line in context.split('\n') if line.strip()]
         return len(elements)
     
-    def _create_fallback_response(
+    async def _create_fallback_response(
         self, 
         user_message: str, 
         current_context: str
     ) -> ContextChatResponse:
         """Crea una respuesta de fallback en caso de error con OpenAI."""
         
-        # Fallback inteligente sin palabras clave - usar análisis de estructura
-        is_question = self._analyze_message_structure(user_message)
+        # Usar el nuevo clasificador inteligente
+        message_type, confidence = await self._smart_classify(user_message)
+        is_question = message_type == "question"
+        
+        # Si la confianza es baja, pedir aclaración
+        if confidence < 0.55:
+            return ContextChatResponse(
+                session_id=uuid4(),
+                ai_response="No estoy seguro de si eso es una pregunta o información. ¿Podrías aclararlo o aportar más detalles?",
+                message_type="question",
+                accumulated_context=current_context,
+                suggestions=["Reformula tu mensaje", "Sé más específico", "Agrega más contexto"],
+                context_elements_count=self._count_context_elements(current_context),
+                suggested_final_question=None
+            )
         
         if is_question:
             # Es una pregunta
@@ -267,66 +589,6 @@ CONTEXTO ACTUAL DEL PROYECTO:
             context_elements_count=context_elements,
             suggested_final_question=suggested_question
         )
-    
-    def _analyze_message_structure(self, message: str) -> bool:
-        """
-        Analiza la estructura del mensaje para determinar si es una pregunta.
-        
-        Args:
-            message: Mensaje del usuario
-            
-        Returns:
-            True si parece ser una pregunta, False si parece ser información
-        """
-        message_lower = message.lower().strip()
-        
-        # Indicadores claros de pregunta
-        question_indicators = [
-            message.startswith('¿'),
-            message.endswith('?'),
-            any(word in message_lower for word in ['cómo', 'qué', 'cuál', 'cuándo', 'dónde', 'por qué', 'quién']),
-            any(word in message_lower for word in ['ayuda', 'necesito ayuda', 'puedes', 'podrías']),
-            message_lower.startswith('me puedes'),
-            message_lower.startswith('podrías'),
-            message_lower.startswith('necesito'),
-        ]
-        
-        # Indicadores claros de información
-        info_indicators = [
-            any(word in message_lower for word in ['tengo', 'somos', 'estamos', 'operamos', 'tenemos']),
-            any(word in message_lower for word in ['mi empresa', 'mi startup', 'nuestro', 'nuestra']),
-            any(word in message_lower for word in ['soy', 'trabajo en', 'me dedico']),
-            message_lower.startswith('el proyecto'),
-            message_lower.startswith('la empresa'),
-            message_lower.startswith('mi'),
-            message_lower.startswith('nuestro'),
-            message_lower.startswith('nuestra'),
-        ]
-        
-        # Contar indicadores
-        question_score = sum(question_indicators)
-        info_score = sum(info_indicators)
-        
-        # Si hay indicadores claros, usarlos
-        if question_score > info_score:
-            return True
-        elif info_score > question_score:
-            return False
-        
-        # Si no hay indicadores claros, usar heurísticas adicionales
-        # Las preguntas tienden a ser más cortas y menos descriptivas
-        word_count = len(message.split())
-        
-        # Mensajes muy cortos con palabras de acción tienden a ser preguntas
-        if word_count <= 5 and any(word in message_lower for word in ['ayuda', 'necesito', 'quiero', 'puedo']):
-            return True
-        
-        # Mensajes largos y descriptivos tienden a ser información
-        if word_count > 15:
-            return False
-        
-        # Por defecto, asumir que es una pregunta para ser más interactivo
-        return True
     
     def _should_suggest_finalization(self, context: str) -> bool:
         """
@@ -445,9 +707,10 @@ Si es información, usa "information" como message_type.
             message_type = parsed.get("message_type", "question")
             ai_response = parsed.get("response_text", "¿Podrías darme más detalles?")
         except:
-            # Si falla, usar análisis de estructura
-            message_type = "question" if self._analyze_message_structure(user_message) else "information"
-            ai_response = "Entiendo. ¿Podrías contarme más detalles?" if message_type == "question" else "Perfecto, he registrado esa información."
+            # Si falla, usar el nuevo clasificador inteligente
+            message_type, confidence = await self._smart_classify(user_message)
+            is_question = message_type == "question"
+            ai_response = "Entiendo. ¿Podrías contarme más detalles?" if is_question else "Perfecto, he registrado esa información."
         
         # Actualizar contexto si es información
         updated_context = current_context

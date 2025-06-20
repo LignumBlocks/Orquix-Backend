@@ -43,16 +43,32 @@ const useAppStore = create()(
         setUser: (user) => set({ user }),
         setAuthToken: (token) => set({ authToken: token }),
         setActiveProject: (project) => {
-          set({ activeProject: project })
+          set({ 
+            activeProject: project,
+            // Limpiar temporalmente mientras se carga el contexto del proyecto
+            isContextBuilding: false
+          })
           if (project?.id) {
+            // Cargar conversaciones del proyecto
             get().loadConversations(project.id).catch(error => {
               console.error('Error loading conversations:', error)
               // Si no hay conversaciones, inicializamos un array vacío
               set({ conversations: [] })
             })
+            
+            // Cargar contexto activo del proyecto (si existe)
+            get().loadActiveContextForProject(project.id).catch(error => {
+              console.error('Error loading active context:', error)
+            })
           } else {
-            // Si no hay proyecto activo, limpiamos las conversaciones
-            set({ conversations: [] })
+            // Si no hay proyecto activo, limpiamos todo
+            set({ 
+              conversations: [],
+              accumulatedContext: '',
+              contextMessages: [],
+              contextSessionId: null,
+              contextBuildingMode: false
+            })
           }
         },
         setProjects: (projects) => set({ projects }),
@@ -166,12 +182,13 @@ const useAppStore = create()(
 
             const response = await api.finalizeContextSession(contextSessionId, finalQuestion)
 
-            // Limpiar estado de construcción de contexto
+            // Limpiar estado de construcción de contexto PERO MANTENER accumulatedContext para el sidebar
             set({
               contextBuildingMode: false,
               contextSession: null,
               contextMessages: [],
-              accumulatedContext: '',
+              // NO limpiar accumulatedContext - mantenerlo para el sidebar
+              // accumulatedContext: '',
               contextSessionId: null,
               isContextBuilding: false,
               isQuerying: false,
@@ -218,6 +235,42 @@ const useAppStore = create()(
             clarificationLoading: false,
             error: null
           })
+        },
+
+        // Cargar contexto activo para un proyecto
+        loadActiveContextForProject: async (projectId) => {
+          try {
+            const activeSession = await api.getActiveContextSession(projectId)
+            
+            // Si hay una sesión activa, cargar su contexto
+            if (activeSession) {
+              set({
+                accumulatedContext: activeSession.accumulated_context || '',
+                contextMessages: activeSession.conversation_history || [],
+                contextSessionId: activeSession.session_id,
+                contextBuildingMode: activeSession.session_status === 'active'
+              })
+              console.log('✅ Contexto activo cargado para proyecto:', projectId)
+            } else {
+              // No hay sesión activa, limpiar contexto
+              set({
+                accumulatedContext: '',
+                contextMessages: [],
+                contextSessionId: null,
+                contextBuildingMode: false
+              })
+              console.log('ℹ️ No hay contexto activo para proyecto:', projectId)
+            }
+          } catch (error) {
+            // Si no hay sesión activa (404) o cualquier otro error, simplemente limpiar
+            console.log('ℹ️ No se pudo cargar contexto activo (normal si no existe):', error.message)
+            set({
+              accumulatedContext: '',
+              contextMessages: [],
+              contextSessionId: null,
+              contextBuildingMode: false
+            })
+          }
         },
 
         // ==========================================
@@ -320,7 +373,15 @@ const useAppStore = create()(
             const newProject = await api.createProject(projectData)
             set(state => ({ 
               projects: [newProject, ...state.projects],
-              activeProject: newProject // Activar el nuevo proyecto automáticamente
+              activeProject: newProject, // Activar el nuevo proyecto automáticamente
+              // LIMPIAR CONTEXTO para el nuevo proyecto
+              accumulatedContext: '',
+              contextMessages: [],
+              contextSessionId: null,
+              contextBuildingMode: false,
+              isContextBuilding: false,
+              // Limpiar también conversaciones
+              conversations: []
             }))
             return newProject
           } catch (error) {
