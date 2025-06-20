@@ -1078,57 +1078,69 @@ async def synthesize_ai_responses(
                 detail="Sesión no encontrada"
             )
         
-        # Verificar que hay respuestas de IAs disponibles
-        if not hasattr(db_session, 'ai_responses_json') or not db_session.ai_responses_json:
+        # Buscar respuestas de IAs en la tabla ia_responses usando el context_session_id
+        from sqlalchemy import select
+        from app.models.models import IAResponse, IAPrompt
+        
+        # Buscar prompts asociados a esta sesión
+        prompts_query = select(IAPrompt).where(
+            IAPrompt.context_session_id == session_id,
+            IAPrompt.deleted_at.is_(None)
+        )
+        prompts_result = await db.execute(prompts_query)
+        prompts = prompts_result.scalars().all()
+        
+        if not prompts:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No hay respuestas de IAs disponibles para sintetizar"
+                detail="No hay prompts asociados a esta sesión"
             )
         
-        # Parsear las respuestas de IAs desde JSON
-        import json
-        ai_responses_data = json.loads(db_session.ai_responses_json)
+        logger.info(f"📋 Encontrados {len(prompts)} prompts para la sesión {session_id}")
         
-        # Manejar diferentes formatos de datos (puede ser lista o diccionario)
-        if isinstance(ai_responses_data, list):
-            responses_list = ai_responses_data
-        elif isinstance(ai_responses_data, dict):
-            responses_list = ai_responses_data.get('responses', [])
-        else:
-            responses_list = []
+        # Buscar respuestas de IAs para estos prompts
+        prompt_ids = [prompt.id for prompt in prompts]
+        responses_query = select(IAResponse).where(
+            IAResponse.ia_prompt_id.in_(prompt_ids),
+            IAResponse.deleted_at.is_(None),
+            IAResponse.error_message.is_(None)  # Solo respuestas exitosas
+        )
+        responses_result = await db.execute(responses_query)
+        ia_responses = responses_result.scalars().all()
         
-        # Verificar que hay respuestas exitosas
-        successful_responses = [
-            resp for resp in responses_list
-            if resp.get('success', False) and resp.get('content')
-        ]
-        
-        if not successful_responses:
+        if not ia_responses:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No hay respuestas exitosas de IAs para sintetizar"
             )
         
+        logger.info(f"✅ Encontradas {len(ia_responses)} respuestas exitosas de IAs")
+        
         # Crear objetos StandardAIResponse para la síntesis
         from app.schemas.ai_response import StandardAIResponse, AIResponseStatus, AIProviderEnum
         
         mock_responses = []
-        for resp_data in successful_responses:
-            provider_name = resp_data.get('provider', 'unknown').lower()
-            provider_enum = AIProviderEnum.OPENAI if provider_name == 'openai' else AIProviderEnum.ANTHROPIC
-            
-            content = resp_data.get('content', '')
-            processing_time = resp_data.get('processing_time_ms', 0)
+        for ia_response in ia_responses:
+            # Determinar el proveedor
+            provider_name = ia_response.ia_provider_name.lower()
+            if provider_name == 'openai':
+                provider_enum = AIProviderEnum.OPENAI
+            elif provider_name == 'anthropic':
+                provider_enum = AIProviderEnum.ANTHROPIC
+            else:
+                provider_enum = AIProviderEnum.OPENAI  # Default
             
             mock_response = StandardAIResponse(
-                response_text=content,
+                response_text=ia_response.raw_response_text,
                 status=AIResponseStatus.SUCCESS,
                 ia_provider_name=provider_enum,
-                latency_ms=processing_time,
+                latency_ms=ia_response.latency_ms,
                 error_message=None,
-                timestamp=datetime.utcnow()
+                timestamp=ia_response.received_at
             )
             mock_responses.append(mock_response)
+        
+        logger.info(f"🔄 Preparadas {len(mock_responses)} respuestas para síntesis")
         
         # Ejecutar síntesis del moderador
         from app.services.ai_moderator import AIModerator
@@ -1161,8 +1173,8 @@ async def synthesize_ai_responses(
                 "source_references": synthesis_result.source_references
             },
             "metadata": {
-                "responses_analyzed": len(successful_responses),
-                "providers_included": [resp.get('provider', 'unknown') for resp in successful_responses],
+                "responses_analyzed": len(ia_responses),
+                "providers_included": [resp.ia_provider_name for resp in ia_responses],
                 "synthesis_time_ms": int(synthesis_time * 1000),
                 "processing_time_ms": synthesis_result.processing_time_ms,
                 "original_responses_count": synthesis_result.original_responses_count,
@@ -1173,7 +1185,7 @@ async def synthesize_ai_responses(
             }
         }
         
-        logger.info(f"✅ Síntesis completada - {len(successful_responses)} respuestas analizadas en {synthesis_time:.2f}s")
+        logger.info(f"✅ Síntesis completada - {len(ia_responses)} respuestas analizadas en {synthesis_time:.2f}s")
         
         return response_data
         

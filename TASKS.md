@@ -131,8 +131,26 @@
 - ✅ **BACKEND UNIFICADO**: Endpoint `query-ais` genera prompts + consulta IAs + guarda en BD
 - ✅ **SIMPLIFICACIÓN FRONTEND**: Un solo botón 🤖 siempre visible cuando hay texto
 - ✅ **TRANSPARENCIA**: Prompts guardados listos para mostrar en sidebar derecho
-**Tiempo estimado**: 90 minutos → **Tiempo real**: 120 minutos (migración BD incluida)
-**Estado**: 🟢 Completada - Flujo completamente unificado y simplificado
+- ✅ **CORRECCIÓN CRÍTICA**: Fix de conversión objeto → array para renderizado de respuestas
+- ✅ **VALIDACIÓN COMPLETA**: Sistema funcionando end-to-end perfectamente
+**Tiempo estimado**: 90 minutos → **Tiempo real**: 150 minutos (incluye debug y correcciones)
+**Estado**: 🟢 Completada - Sistema 100% funcional con ambas IAs respondiendo
+
+### 3.3. ✅ [Feature] Editor de Prompts
+**Archivos**: 
+- `backend/app/api/v1/endpoints/context_chat.py` - Endpoint PUT ya existente
+- `backend/app/schemas/ia_prompt.py` - Schema IAPromptUpdate ya existente
+- `frontend/src/components/layout/CenterColumn.jsx` - Modal de edición y funcionalidad
+**Objetivo**: Permitir al usuario editar prompts antes de ejecutar
+**Cambios**:
+- ✅ **MODAL DE EDICIÓN**: Interfaz completa con textarea, contador de caracteres
+- ✅ **FUNCIONES FRONTEND**: handleEditPrompt, handleSaveEditedPrompt, handleCancelEditPrompt
+- ✅ **INTEGRACIÓN BACKEND**: Uso del endpoint PUT existente /prompts/{id}
+- ✅ **UX COMPLETA**: Botón "Modificar Prompt" funcional, estados de carga
+- ✅ **PERSISTENCIA**: Versión editada se guarda en BD como edited_prompt
+- ✅ **VALIDACIÓN**: Verificación de texto no vacío, manejo de errores
+**Tiempo estimado**: 60 minutos → **Tiempo real**: 45 minutos
+**Estado**: 🟢 Completada - Editor totalmente funcional
 
 ### 4. ❌ [Bug] Missing add_info Method in MetricsCollector  
 **Archivo**: `backend/app/core/metrics.py`

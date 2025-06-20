@@ -27,10 +27,14 @@ const CenterColumn = ({ activeProject }) => {
   // ==========================================
   // NUEVO: Estados para el botón "Orquestar"
   // ==========================================
-  const [orchestrateState, setOrchestrateState] = useState('generate_prompts') // 'generate_prompts' | 'generate_analisis'
+  const [orchestrateState, setOrchestrateState] = useState('generate_prompts') // 'generate_prompts' | 'generate_analisis' | 'ready_for_synthesis'
   const [currentPromptId, setCurrentPromptId] = useState(null)
   const [generatedPrompt, setGeneratedPrompt] = useState(null)
+  const [synthesisSessionId, setSynthesisSessionId] = useState(null)
   const [isOrchestrating, setIsOrchestrating] = useState(false)
+  const [isEditingPrompt, setIsEditingPrompt] = useState(false)
+  const [editingPromptId, setEditingPromptId] = useState(null)
+  const [editedPromptText, setEditedPromptText] = useState('')
 
   const chatContainerRef = useRef(null)
 
@@ -64,6 +68,7 @@ const CenterColumn = ({ activeProject }) => {
     setOrchestrateState('generate_prompts')
     setCurrentPromptId(null)
     setGeneratedPrompt(null)
+    setSynthesisSessionId(null)
     setIsOrchestrating(false)
   }, [activeProject?.id, clearLoadingStates])
 
@@ -503,27 +508,28 @@ const CenterColumn = ({ activeProject }) => {
   }
 
   const handleSynthesizeResponses = async () => {
-    if (!contextSession?.session_id) {
+    const sessionIdToUse = synthesisSessionId || contextSessionId
+    if (!sessionIdToUse) {
       setError('No hay sesión de contexto activa')
       return
     }
 
-    setIsSynthesizing(true)
+    setIsOrchestrating(true)
     setError(null)
 
     try {
       const lastInteraction = conversationFlow[conversationFlow.length - 1]
       const userQuestion = lastInteraction?.user_question || "¿Qué recomendaciones me puedes dar?"
 
-      console.log('🔬 Ejecutando síntesis del moderador para sesión:', contextSession.session_id)
+      console.log('🔬 Ejecutando síntesis del moderador para sesión:', sessionIdToUse)
 
-      const response = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSession.session_id}/synthesize`, {
+      const response = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${sessionIdToUse}/synthesize`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          session_id: contextSession.session_id,
+          session_id: sessionIdToUse,
           final_question: userQuestion
         })
       })
@@ -551,12 +557,13 @@ const CenterColumn = ({ activeProject }) => {
       setOrchestrateState('generate_prompts')
       setCurrentPromptId(null)
       setGeneratedPrompt(null)
+      setSynthesisSessionId(null)
 
     } catch (error) {
       console.error('Error ejecutando síntesis:', error)
       setError(`Error ejecutando síntesis: ${error.message}`)
     } finally {
-      setIsSynthesizing(false)
+      setIsOrchestrating(false)
     }
   }
 
@@ -565,8 +572,13 @@ const CenterColumn = ({ activeProject }) => {
   // ==========================================
 
   const handleOrchestrate = async () => {
-    // Solo generar prompts, la ejecución se hace desde los botones del prompt
-    await handleGeneratePromptForOrchestration()
+    if (orchestrateState === 'generate_prompts') {
+      // Generar prompts para las IAs
+      await handleGeneratePromptForOrchestration()
+    } else if (orchestrateState === 'ready_for_synthesis') {
+      // Hacer síntesis con el moderador
+      await handleSynthesizeResponses()
+    }
   }
 
   const handleGeneratePromptForOrchestration = async () => {
@@ -582,6 +594,31 @@ const CenterColumn = ({ activeProject }) => {
       const userQuery = message.trim()
       console.log('🎯 Generando prompt para orquestación:', userQuery)
 
+      // Si no hay contextSessionId, crear una sesión de contexto primero
+      let sessionId = contextSessionId
+      if (!sessionId) {
+        console.log('📝 Creando sesión de contexto para el prompt...')
+        const contextResponse = await fetch(`http://localhost:8000/api/v1/context-chat/projects/${activeProject.id}/context-chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer dev-mock-token-12345'
+          },
+          body: JSON.stringify({
+            user_message: userQuery,
+            context_session_id: null
+          })
+        })
+
+        if (!contextResponse.ok) {
+          throw new Error(`Error creando sesión de contexto: ${contextResponse.status}`)
+        }
+
+        const contextData = await contextResponse.json()
+        sessionId = contextData.session_id
+        console.log('✅ Sesión de contexto creada:', sessionId)
+      }
+
       // Llamar al nuevo endpoint de generar prompt
       const response = await fetch(`http://localhost:8000/api/v1/context-chat/projects/${activeProject.id}/generate-prompt`, {
         method: 'POST',
@@ -591,7 +628,7 @@ const CenterColumn = ({ activeProject }) => {
         },
         body: JSON.stringify({
           query: userQuery,
-          context_session_id: contextSessionId
+          context_session_id: sessionId
         })
       })
 
@@ -601,6 +638,10 @@ const CenterColumn = ({ activeProject }) => {
 
       const promptData = await response.json()
       console.log('✅ Prompt generado:', promptData)
+
+      // Guardar el sessionId para usar en la síntesis
+      setSynthesisSessionId(sessionId)
+      console.log('🔄 SessionId guardado para síntesis:', sessionId)
 
       // Guardar el prompt generado
       setCurrentPromptId(promptData.prompt_id)
@@ -626,7 +667,7 @@ const CenterColumn = ({ activeProject }) => {
     }
   }
 
-  const handleExecutePromptForOrchestration = async () => {
+  const handleExecutePromptForOrchestration = async (useEditedVersion = false) => {
     if (!currentPromptId) {
       setError('No hay prompt generado para ejecutar')
       return
@@ -636,7 +677,7 @@ const CenterColumn = ({ activeProject }) => {
     setError(null)
 
     try {
-      console.log('🚀 Ejecutando prompt:', currentPromptId)
+      console.log('🚀 Ejecutando prompt:', currentPromptId, 'usar editado:', useEditedVersion)
 
       // Llamar al endpoint de ejecutar prompt
       const response = await fetch(`http://localhost:8000/api/v1/context-chat/prompts/${currentPromptId}/execute`, {
@@ -647,7 +688,7 @@ const CenterColumn = ({ activeProject }) => {
         },
         body: JSON.stringify({
           prompt_id: currentPromptId,
-          use_edited_version: false // Por ahora usar la versión original
+          use_edited_version: useEditedVersion
         })
       })
 
@@ -675,8 +716,8 @@ const CenterColumn = ({ activeProject }) => {
 
       setConversationFlow(prev => [...prev, aiResponsesInteraction])
 
-      // El estado se mantendrá en 'generate_analisis' hasta que el moderador haga su síntesis
-      // Después de la síntesis, volverá a 'generate_prompts' en handleSynthesizeResponses
+      // Cambiar estado para habilitar el botón de síntesis
+      setOrchestrateState('ready_for_synthesis')
 
     } catch (error) {
       console.error('❌ Error ejecutando prompt:', error)
@@ -684,6 +725,90 @@ const CenterColumn = ({ activeProject }) => {
     } finally {
       setIsOrchestrating(false)
     }
+  }
+
+  const handleEditPrompt = async (promptId, originalPrompt) => {
+    console.log('✏️ Iniciando edición de prompt:', { promptId, originalPrompt: originalPrompt?.substring(0, 100) + '...' })
+    if (!promptId) {
+      setError('No se encontró el ID del prompt para editar')
+      return
+    }
+    if (!originalPrompt) {
+      setError('No se encontró el texto del prompt para editar')
+      return
+    }
+    setEditingPromptId(promptId)
+    setEditedPromptText(originalPrompt)
+    setIsEditingPrompt(true)
+  }
+
+  const handleSaveEditedPrompt = async () => {
+    if (!editingPromptId || !editedPromptText?.trim()) {
+      setError('No hay texto para guardar')
+      return
+    }
+
+    setIsOrchestrating(true)
+    setError(null)
+
+    try {
+      console.log('💾 Guardando prompt editado:', editingPromptId)
+
+      const response = await fetch(`http://localhost:8000/api/v1/context-chat/prompts/${editingPromptId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer dev-mock-token-12345'
+        },
+        body: JSON.stringify({
+          edited_prompt: editedPromptText?.trim() || ''
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(`Error al guardar prompt editado: ${response.status}`)
+      }
+
+      const updatedPrompt = await response.json()
+      console.log('✅ Prompt editado guardado:', updatedPrompt)
+
+      // Actualizar el prompt en el flujo conversacional
+      setConversationFlow(prev => {
+        const updated = prev.map(interaction => {
+          if (interaction.type === 'prompt_generated' && interaction.prompt_data?.prompt_id === editingPromptId) {
+            console.log('🔄 Actualizando prompt:', interaction.id)
+            return {
+              ...interaction,
+              prompt_data: {
+                ...interaction.prompt_data,
+                generated_prompt: editedPromptText?.trim() || '', // Actualizar el prompt directamente
+                status: 'edited'
+              }
+            }
+          }
+          return interaction
+        })
+        console.log('🔄 Prompt actualizado en el flujo')
+        return updated
+      })
+
+      // Cerrar el editor
+      setIsEditingPrompt(false)
+      setEditingPromptId(null)
+      setEditedPromptText('')
+
+    } catch (error) {
+      console.error('❌ Error guardando prompt editado:', error)
+      setError(error.message || 'Error al guardar el prompt editado')
+    } finally {
+      setIsOrchestrating(false)
+    }
+  }
+
+  const handleCancelEditPrompt = () => {
+    setIsEditingPrompt(false)
+    setEditingPromptId(null)
+    setEditedPromptText('')
   }
 
   const handleContinueClarification = async (userResponse) => {
@@ -1297,7 +1422,13 @@ const CenterColumn = ({ activeProject }) => {
                            <div>
                              <span className="font-medium">Estado:</span>
                              <br />
-                             {interaction.prompt_data?.status || 'draft'}
+                             <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                               interaction.prompt_data?.status === 'edited' 
+                                 ? 'bg-blue-100 text-blue-800' 
+                                 : 'bg-gray-100 text-gray-800'
+                             }`}>
+                               {interaction.prompt_data?.status === 'edited' ? '✏️ Editado' : (interaction.prompt_data?.status || 'draft')}
+                             </span>
                            </div>
                          </div>
                        </div>
@@ -1309,7 +1440,7 @@ const CenterColumn = ({ activeProject }) => {
                          onClick={() => {
                            setCurrentPromptId(interaction.prompt_data?.prompt_id)
                            setGeneratedPrompt(interaction.prompt_data)
-                           handleExecutePromptForOrchestration()
+                           handleExecutePromptForOrchestration(interaction.prompt_data?.status === 'edited')
                          }}
                          disabled={isOrchestrating}
                          className={`flex-1 px-4 py-2 rounded-lg flex items-center justify-center ${
@@ -1323,15 +1454,13 @@ const CenterColumn = ({ activeProject }) => {
                          ) : (
                            <span className="mr-2">✅</span>
                          )}
-                         Ejecutar Prompt
+                         Ejecutar Prompt{interaction.prompt_data?.status === 'edited' ? ' (Editado)' : ''}
                        </button>
                        
                        <button
-                         onClick={() => {
-                           // TODO: Implementar edición de prompt
-                           alert('Función de edición en desarrollo')
-                         }}
-                         className="flex-1 px-4 py-2 rounded-lg flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+                         onClick={() => handleEditPrompt(interaction.prompt_data?.prompt_id, interaction.prompt_data?.generated_prompt)}
+                         disabled={isOrchestrating}
+                         className="flex-1 px-4 py-2 rounded-lg flex items-center justify-center bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium transition-colors"
                        >
                          <span className="mr-2">✏️</span>
                          Modificar Prompt
@@ -1351,8 +1480,8 @@ const CenterColumn = ({ activeProject }) => {
                        </p>
                      </div>
 
-                     {/* Respuestas Individuales */}
-                     <div className="space-y-4">
+                     {/* Respuestas Individuales con Acordeón */}
+                     <div className="space-y-3">
                        {interaction.responses?.map((response, idx) => {
                          const isOpenAI = response.provider === 'openai'
                          const isAnthropic = response.provider === 'anthropic'
@@ -1365,38 +1494,65 @@ const CenterColumn = ({ activeProject }) => {
                          const dotColor = isOpenAI ? 'bg-green-500' : 
                                          isAnthropic ? 'bg-orange-500' : 
                                          'bg-gray-500'
+                         const accordionKey = `response-${interaction.id}-${idx}`
                          
                          return (
-                           <div key={idx} className={`${bgColor} border rounded-lg p-4`}>
-                             <div className="flex items-center justify-between mb-3">
-                               <div className="flex items-center space-x-2">
+                           <div key={idx} className={`${bgColor} border rounded-lg overflow-hidden`}>
+                             {/* Header del Acordeón */}
+                             <button
+                               onClick={() => {
+                                 setExpandedPrompts(prev => ({
+                                   ...prev,
+                                   [accordionKey]: !prev[accordionKey]
+                                 }))
+                               }}
+                               className="w-full p-4 flex items-center justify-between hover:bg-opacity-80 transition-colors"
+                             >
+                               <div className="flex items-center space-x-3">
                                  <div className={`w-3 h-3 ${dotColor} rounded-full`}></div>
                                  <span className={`font-medium ${textColor}`}>
                                    {response.provider?.toUpperCase()} {response.model && `(${response.model})`}
                                  </span>
+                                 <div className="flex items-center space-x-2 text-xs">
+                                   {response.success ? (
+                                     <span className="text-green-600 flex items-center">
+                                       <CheckIcon className="w-3 h-3 mr-1" />
+                                       {response.processing_time_ms}ms
+                                     </span>
+                                   ) : (
+                                     <span className="text-red-600 flex items-center">
+                                       <AlertCircleIcon className="w-3 h-3 mr-1" />
+                                       Error
+                                     </span>
+                                   )}
+                                 </div>
                                </div>
-                               <div className="flex items-center space-x-2 text-xs">
-                                 {response.success ? (
-                                   <span className="text-green-600 flex items-center">
-                                     <CheckIcon className="w-3 h-3 mr-1" />
-                                     {response.processing_time_ms}ms
-                                   </span>
-                                 ) : (
-                                   <span className="text-red-600 flex items-center">
-                                     <AlertCircleIcon className="w-3 h-3 mr-1" />
-                                     Error
+                               
+                               <div className="flex items-center space-x-2">
+                                 {/* Preview del contenido */}
+                                 {response.success && !expandedPrompts[accordionKey] && (
+                                   <span className={`text-xs ${textColor} opacity-70 max-w-xs truncate`}>
+                                     {response.content?.substring(0, 80)}...
                                    </span>
                                  )}
+                                 <div className={`transform transition-transform ${expandedPrompts[accordionKey] ? 'rotate-180' : ''}`}>
+                                   ▼
+                                 </div>
                                </div>
-                             </div>
+                             </button>
                              
-                             {response.success ? (
-                               <div className={`text-sm whitespace-pre-wrap ${textColor} leading-relaxed`}>
-                                 {response.content}
-                               </div>
-                             ) : (
-                               <div className="text-red-600 text-sm">
-                                 ⚠️ {response.error}
+                             {/* Contenido del Acordeón */}
+                             {expandedPrompts[accordionKey] && (
+                               <div className="px-4 pb-4 border-t border-opacity-30">
+                                 {response.success ? (
+                                   <div className={`text-sm whitespace-pre-wrap ${textColor} leading-relaxed mt-3`}>
+                                     {response.content}
+                                   </div>
+                                 ) : (
+                                   <div className="text-red-600 text-sm mt-3">
+                                     ⚠️ {response.error}
+                                   </div>
+                                 )}
                                </div>
                              )}
                            </div>
@@ -1652,6 +1808,60 @@ const CenterColumn = ({ activeProject }) => {
         )}
       </div>
 
+      {/* Modal de Edición de Prompt */}
+      {isEditingPrompt && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+            <div className="p-6 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">✏️ Editar Prompt</h3>
+              <p className="text-sm text-gray-600 mt-1">
+                Modifica el prompt antes de enviarlo a las IAs. Los cambios se guardarán como versión editada.
+              </p>
+            </div>
+            
+            <div className="p-6 max-h-[60vh] overflow-y-auto">
+              <textarea
+                value={editedPromptText || ''}
+                onChange={(e) => setEditedPromptText(e.target.value)}
+                placeholder="Escribe tu prompt aquí..."
+                className="w-full h-96 p-4 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 bg-white"
+                style={{ fontFamily: 'monospace', fontSize: '14px', lineHeight: '1.5' }}
+              />
+              <div className="mt-2 text-xs text-gray-500">
+                Longitud: {editedPromptText?.length || 0} caracteres
+              </div>
+            </div>
+            
+            <div className="p-6 border-t border-gray-200 flex justify-end space-x-3">
+              <button
+                onClick={handleCancelEditPrompt}
+                disabled={isOrchestrating}
+                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:bg-gray-300 rounded-lg font-medium transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveEditedPrompt}
+                disabled={isOrchestrating || !editedPromptText?.trim()}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg font-medium transition-colors flex items-center"
+              >
+                {isOrchestrating ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Guardando...
+                  </>
+                ) : (
+                  <>
+                    <span className="mr-2">💾</span>
+                    Guardar Cambios
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Estado de la Conversación */}
       <ConversationStatePanel />
 
@@ -1688,8 +1898,8 @@ const CenterColumn = ({ activeProject }) => {
               />
             </div>
             
-            {/* Botón "Orquestar" - Solo visible en estado inicial */}
-            {message.trim() && orchestrateState === 'generate_prompts' && (
+            {/* Botón "Orquestar" - Visible para generar prompts o hacer síntesis */}
+            {((message.trim() && orchestrateState === 'generate_prompts') || orchestrateState === 'ready_for_synthesis') && (
               <button
                 type="button"
                 onClick={handleOrchestrate}
@@ -1697,12 +1907,19 @@ const CenterColumn = ({ activeProject }) => {
                 className={`px-3 py-2 rounded-lg flex items-center justify-center min-w-[100px] h-[44px] ${
                   isOrchestrating || isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs
                     ? 'bg-gray-300 cursor-not-allowed'
-                    : 'bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600'
+                    : orchestrateState === 'ready_for_synthesis'
+                      ? 'bg-gradient-to-r from-green-500 to-teal-500 hover:from-green-600 hover:to-teal-600'
+                      : 'bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600'
                 } text-white transition-colors text-sm font-medium`}
-                title="Generar prompt para las IAs"
+                title={orchestrateState === 'ready_for_synthesis' ? 'Hacer síntesis con el moderador' : 'Generar prompt para las IAs'}
               >
                 {isOrchestrating ? (
                   <LoaderIcon className="w-4 h-4 animate-spin mr-1" />
+                ) : orchestrateState === 'ready_for_synthesis' ? (
+                  <>
+                    <span className="mr-1">🔬</span>
+                    <span>Sintetizar</span>
+                  </>
                 ) : (
                   <>
                     <span className="mr-1">🎯</span>
