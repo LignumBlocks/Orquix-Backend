@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Dict
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
@@ -21,6 +21,29 @@ async def create_ia_prompt(
         original_query=original_query,
         generated_prompt=generated_prompt,
         status="generated"
+    )
+    
+    db.add(ia_prompt)
+    await db.commit()
+    await db.refresh(ia_prompt)
+    return ia_prompt
+
+
+async def create_moderator_prompt(
+    db: AsyncSession,
+    project_id: UUID,
+    context_session_id: Optional[UUID],
+    original_query: str,
+    generated_prompt: str,
+    responses_to_synthesize: int
+) -> IAPrompt:
+    """Crear un nuevo prompt del moderador para síntesis"""
+    ia_prompt = IAPrompt(
+        project_id=project_id,
+        context_session_id=context_session_id,
+        original_query=f"[MODERADOR] Síntesis de {responses_to_synthesize} respuestas: {original_query}",
+        generated_prompt=generated_prompt,
+        status="moderator_synthesis"
     )
     
     db.add(ia_prompt)
@@ -54,6 +77,44 @@ async def get_ia_prompts_by_project(
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def get_all_prompts_by_project_with_type(
+    db: AsyncSession, 
+    project_id: UUID,
+    limit: int = 50
+) -> List[Dict]:
+    """Obtener todos los prompts de un proyecto clasificados por tipo"""
+    result = await db.execute(
+        select(IAPrompt)
+        .options(selectinload(IAPrompt.ia_responses))
+        .where(IAPrompt.project_id == project_id)
+        .where(IAPrompt.deleted_at.is_(None))
+        .order_by(IAPrompt.created_at.desc())
+        .limit(limit)
+    )
+    
+    prompts = list(result.scalars().all())
+    
+    # Clasificar prompts por tipo
+    classified_prompts = []
+    for prompt in prompts:
+        prompt_type = "moderator" if prompt.status == "moderator_synthesis" else "ai_provider"
+        is_moderator = prompt.original_query.startswith("[MODERADOR]") if prompt.original_query else False
+        
+        classified_prompts.append({
+            "id": str(prompt.id),
+            "type": prompt_type,
+            "is_moderator": is_moderator,
+            "original_query": prompt.original_query,
+            "generated_prompt": prompt.generated_prompt,
+            "status": prompt.status,
+            "created_at": prompt.created_at,
+            "responses_count": len(prompt.ia_responses) if prompt.ia_responses else 0,
+            "context_session_id": str(prompt.context_session_id) if prompt.context_session_id else None
+        })
+    
+    return classified_prompts
 
 
 async def update_ia_prompt(

@@ -44,6 +44,11 @@ const useAppStore = create()(
         isContextBuilding: false,
         contextSessionId: null,
 
+        // ✅ NUEVO: Estado de múltiples sesiones
+        allContextSessions: [],
+        loadingContextSessions: false,
+        contextSessionsLastUpdated: null,
+
         // Acciones
         setUser: (user) => set({ user }),
         setAuthToken: (token) => set({ authToken: token }),
@@ -179,6 +184,46 @@ const useAppStore = create()(
               }]
             }))
             
+            return null
+          }
+        },
+
+        // ✅ NUEVO: Refrescar contexto acumulado de una sesión
+        refreshSessionContext: async (sessionId) => {
+          if (!sessionId) return null
+
+          try {
+            const response = await fetch(`http://localhost:8000/api/v1/context-chat/sessions/${sessionId}/status`, {
+              method: 'GET',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer dev-mock-token-12345'
+              }
+            })
+
+            if (!response.ok) {
+              console.error('Error obteniendo estado de sesión:', response.status)
+              return null
+            }
+
+            const sessionData = await response.json()
+            
+            // Actualizar el contexto acumulado en el store
+            set({
+              accumulatedContext: sessionData.accumulated_context || '',
+              contextSessionId: sessionData.session_id
+            })
+
+            console.log('✅ Contexto acumulado actualizado:', {
+              sessionId: sessionData.session_id,
+              status: sessionData.status,
+              contextLength: sessionData.context_length
+            })
+
+            return sessionData
+
+          } catch (error) {
+            console.error('❌ Error refrescando contexto de sesión:', error)
             return null
           }
         },
@@ -588,7 +633,303 @@ const useAppStore = create()(
             })
           }
         },
-        clearError: () => set({ error: null })
+        clearError: () => set({ error: null }),
+
+        // Refrescar contexto de sesión desde el backend
+        refreshSessionContext: async () => {
+          const state = get()
+          if (!state.contextSessionId) return
+          
+          try {
+            const session = await api.getContextSession(state.contextSessionId)
+            if (session) {
+              set({
+                accumulatedContext: session.accumulated_context || '',
+                contextSession: session
+              })
+            }
+          } catch (error) {
+            console.error('Error refreshing session context:', error)
+          }
+        },
+
+        // ✅ NUEVO: Cargar sesiones de contexto por chat
+        loadContextSessionsByChat: async (chatId) => {
+          if (!chatId) return
+          
+          set({ loadingContextSessions: true })
+          
+          try {
+            const response = await api.getChatSessionsDetailed(chatId)
+            
+            // Actualizar las sesiones en el estado
+            set(state => {
+              // Encontrar y actualizar el chat en allContextSessions
+              const updatedSessions = [...state.allContextSessions]
+              const chatIndex = updatedSessions.findIndex(chat => chat.chat_id === chatId)
+              
+              if (chatIndex >= 0) {
+                updatedSessions[chatIndex] = {
+                  chat_id: response.chat_id,
+                  chat_title: response.chat_title,
+                  sessions: response.sessions,
+                  sessions_count: response.total_sessions
+                }
+              } else {
+                updatedSessions.push({
+                  chat_id: response.chat_id,
+                  chat_title: response.chat_title,
+                  sessions: response.sessions,
+                  sessions_count: response.total_sessions
+                })
+              }
+              
+              return {
+                allContextSessions: updatedSessions,
+                contextSessionsLastUpdated: new Date(),
+                loadingContextSessions: false
+              }
+            })
+            
+            // Si hay una sesión activa, actualizarla en el estado
+            if (response.active_session_id) {
+              const activeSession = response.sessions.find(s => s.id === response.active_session_id)
+              if (activeSession) {
+                set({
+                  contextSessionId: activeSession.id,
+                  accumulatedContext: activeSession.accumulated_context || '',
+                  contextSession: activeSession
+                })
+              }
+            }
+            
+            return response
+          } catch (error) {
+            console.error('Error loading chat sessions:', error)
+            set({ 
+              loadingContextSessions: false,
+              error: error.message 
+            })
+            throw error
+          }
+        },
+
+        // ✅ NUEVO: Cargar resumen de sesiones de todo el proyecto
+        loadProjectSessionsSummary: async (projectId) => {
+          if (!projectId) return
+          
+          set({ loadingContextSessions: true })
+          
+          try {
+            const response = await api.getProjectContextSessionsSummary(projectId)
+            
+            // Convertir el formato del backend al formato esperado por el frontend
+            const allSessions = []
+            if (response.chats_with_sessions) {
+              response.chats_with_sessions.forEach(chat => {
+                if (chat.sessions) {
+                  chat.sessions.forEach(session => {
+                    allSessions.push({
+                      ...session,
+                      chat_id: chat.chat_id,
+                      chat_title: chat.chat_title
+                    })
+                  })
+                }
+              })
+            }
+            
+            set({
+              allContextSessions: allSessions,
+              contextSessionsLastUpdated: new Date(),
+              loadingContextSessions: false
+            })
+            
+            return response
+          } catch (error) {
+            console.error('Error loading project sessions summary:', error)
+            set({ 
+              loadingContextSessions: false,
+              error: error.message 
+            })
+            throw error
+          }
+        },
+
+        // ✅ NUEVO: Seleccionar sesión de contexto específica
+        selectContextSession: (sessionId) => {
+          const state = get()
+          const session = state.allContextSessions.find(s => s.id === sessionId)
+          
+          if (session) {
+            console.log('🎯 Seleccionando sesión:', {
+              sessionId: session.id,
+              status: session.status,
+              contextLength: session.accumulated_context?.length || 0
+            })
+            
+            set({
+              contextSessionId: session.id,
+              accumulatedContext: session.accumulated_context || '',
+              contextSession: session,
+              contextBuildingMode: session.status === 'active'
+            })
+          }
+        },
+
+        // ✅ NUEVO: Actualizar sesión específica en la lista
+        updateContextSessionInList: (sessionId, updates) => {
+          set(state => ({
+            allContextSessions: state.allContextSessions.map(session => 
+              session.id === sessionId 
+                ? { ...session, ...updates }
+                : session
+            )
+          }))
+        },
+
+        // ✅ NUEVO: Seleccionar chat y cargar todo su contexto
+        selectChatAndLoadContext: async (chat, project = null) => {
+          try {
+            console.log('🎯 Seleccionando chat y cargando contexto:', { 
+              chatId: chat.id, 
+              chatTitle: chat.title,
+              projectId: project?.id || chat.project_id 
+            })
+
+            // 1. Asegurar que el proyecto esté activo
+            const currentProject = project || get().activeProject
+            const targetProjectId = chat.project_id
+            
+            console.log('🔍 Verificando proyecto activo:', {
+              currentProjectId: currentProject?.id,
+              targetProjectId: targetProjectId,
+              needsProjectChange: !currentProject || currentProject.id !== targetProjectId
+            })
+            
+            if (!currentProject || currentProject.id !== targetProjectId) {
+              // Si el chat pertenece a otro proyecto, cambiar proyecto activo
+              let projectToSet = project
+              
+              if (!projectToSet) {
+                // Buscar el proyecto en la lista
+                projectToSet = get().projects.find(p => p.id === targetProjectId)
+                
+                // Si no está en la lista, cargar los proyectos primero
+                if (!projectToSet) {
+                  console.log('🔄 Proyecto no encontrado en lista, cargando proyectos...')
+                  try {
+                    await get().loadProjects()
+                    projectToSet = get().projects.find(p => p.id === targetProjectId)
+                  } catch (error) {
+                    console.error('Error cargando proyectos:', error)
+                  }
+                }
+              }
+              
+              if (projectToSet) {
+                console.log('🎯 Activando proyecto:', projectToSet.name)
+                get().setActiveProject(projectToSet)
+              } else {
+                console.warn('⚠️ No se pudo encontrar el proyecto para el chat')
+              }
+            }
+
+            // 2. Seleccionar el chat activo
+            set({ 
+              activeChat: chat,
+              loadingContextSessions: true,
+              error: null
+            })
+
+            // 3. Cargar todas las sesiones del chat
+            const chatSessionsResponse = await api.getChatSessionsDetailed(chat.id)
+            
+            console.log('📊 Respuesta del backend:', {
+              totalSessions: chatSessionsResponse.total_sessions,
+              activeSessionId: chatSessionsResponse.active_session_id,
+              sessions: chatSessionsResponse.sessions?.length || 0
+            })
+            
+            // 4. Actualizar el estado con las sesiones del chat
+            set(state => {
+              // Convertir las sesiones a formato plano para el sidebar
+              const sessionsForSidebar = (chatSessionsResponse.sessions || []).map(session => ({
+                ...session,
+                chat_id: chatSessionsResponse.chat_id,
+                chat_title: chatSessionsResponse.chat_title
+              }))
+              
+              // Filtrar sesiones de otros chats y agregar las nuevas
+              const otherSessions = state.allContextSessions.filter(session => 
+                !session.chat_id || session.chat_id !== chat.id
+              )
+              
+              return {
+                allContextSessions: [...otherSessions, ...sessionsForSidebar],
+                loadingContextSessions: false
+              }
+            })
+
+            // 5. Si hay una sesión activa, cargar su contexto
+            let activeSession = null
+            if (chatSessionsResponse.sessions) {
+              // Buscar sesión activa (status = 'active')
+              activeSession = chatSessionsResponse.sessions.find(s => s.status === 'active')
+              
+              // Si no hay activa, tomar la más reciente
+              if (!activeSession && chatSessionsResponse.sessions.length > 0) {
+                activeSession = chatSessionsResponse.sessions.sort((a, b) => 
+                  new Date(b.started_at) - new Date(a.started_at)
+                )[0]
+              }
+            }
+
+            // 6. Actualizar contexto con la sesión seleccionada
+            if (activeSession) {
+              set({
+                contextSessionId: activeSession.id,
+                accumulatedContext: activeSession.accumulated_context || '',
+                contextBuildingMode: activeSession.status === 'active',
+                contextSession: activeSession
+              })
+
+              console.log('✅ Contexto cargado desde sesión:', {
+                sessionId: activeSession.id,
+                status: activeSession.status,
+                contextLength: activeSession.accumulated_context?.length || 0
+              })
+            } else {
+              // No hay sesiones, limpiar contexto
+              set({
+                contextSessionId: null,
+                accumulatedContext: '',
+                contextBuildingMode: false,
+                contextSession: null
+              })
+
+              console.log('ℹ️ No hay sesiones en el chat, contexto limpiado')
+            }
+
+            // 7. También cargar el resumen general del proyecto para tener vista completa
+            if (currentProject?.id) {
+              get().loadProjectSessionsSummary(currentProject.id).catch(error => {
+                console.error('Error cargando resumen del proyecto:', error)
+              })
+            }
+
+            console.log('✅ Chat seleccionado y contexto cargado exitosamente')
+            return chatSessionsResponse
+
+          } catch (error) {
+            console.error('❌ Error seleccionando chat y cargando contexto:', error)
+            set({ 
+              loadingContextSessions: false,
+              error: error.message 
+            })
+            throw error
+          }
+        }
       }),
       {
         name: 'orquix-store',

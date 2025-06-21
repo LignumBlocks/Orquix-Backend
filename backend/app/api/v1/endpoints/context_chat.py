@@ -201,29 +201,32 @@ async def _finalize_context_session_compat(db: AsyncSession, session_id: UUID):
 
 async def _get_active_session_for_project_compat(db: AsyncSession, project_id: UUID, user_id: UUID):
     """Función de compatibilidad para obtener sesión activa."""
-    # Obtener chats del proyecto
-    chats = await chat_crud.get_chats_by_project(db, project_id)
-    
-    # Filtrar por usuario
-    user_chats = [chat for chat in chats if chat.user_id == user_id]
-    
-    for chat in user_chats:
-        # Buscar sesión activa en el chat
-        active_session = await session_crud.get_active_session(db, chat.id)
-        if active_session:
-            # Convertir a formato compatible
-            return type('MockInteractionEvent', (), {
-                'id': active_session.id,
-                'project_id': project_id,
-                'user_id': active_session.user_id,
-                'context_used_summary': active_session.accumulated_context,
-                'ai_responses_json': '[]',
-                'session_status': active_session.status,
-                'created_at': active_session.started_at,
-                'updated_at': active_session.updated_at
-            })()
-    
-    return None
+    try:
+        # Obtener chats del proyecto
+        chats = await chat_crud.get_chats_by_project(db, project_id)
+        
+        # Buscar en todos los chats del proyecto (no filtrar por usuario ya que los chats pueden ser compartidos)
+        for chat in chats:
+            # Buscar sesión activa en el chat
+            active_session = await session_crud.get_active_session(db, chat.id)
+            if active_session and active_session.user_id == user_id:
+                # Convertir a formato compatible
+                return type('MockInteractionEvent', (), {
+                    'id': active_session.id,
+                    'project_id': project_id,
+                    'user_id': active_session.user_id,
+                    'context_used_summary': active_session.accumulated_context,
+                    'ai_responses_json': '[]',
+                    'session_status': active_session.status,
+                    'created_at': active_session.started_at,
+                    'updated_at': active_session.updated_at
+                })()
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error buscando sesión activa para proyecto {project_id}: {e}")
+        return None
 
 from app.schemas.ia_prompt import (
     GeneratePromptRequest,
@@ -268,7 +271,7 @@ async def _automatically_include_moderator_synthesis(
             and_(
                 InteractionEvent.project_id == project_id,
                 InteractionEvent.user_id == user_id,
-                InteractionEvent.moderator_synthesis_json.isnot(None),
+                InteractionEvent.event_type == "moderator_synthesis",
                 InteractionEvent.deleted_at.is_(None)
             )
         ).order_by(desc(InteractionEvent.created_at)).limit(1)
@@ -286,8 +289,8 @@ async def _automatically_include_moderator_synthesis(
             logger.debug("Síntesis del moderador ya incluida en el contexto")
             return current_context
         
-        # Parsear la síntesis del moderador
-        moderator_data = json.loads(recent_interaction.moderator_synthesis_json)
+        # Parsear la síntesis del moderador desde event_data
+        moderator_data = recent_interaction.event_data if recent_interaction.event_data else {}
         
         logger.info(f"✨ Incluyendo automáticamente síntesis del moderador - Calidad: {moderator_data.get('quality', 'unknown')}")
         
@@ -1726,18 +1729,189 @@ async def execute_prompt(
         # Marcar prompt como ejecutado
         await ia_prompt_crud.mark_prompt_as_executed(db, prompt_id)
         
-        # Preparar respuesta
+        # ✅ NUEVO: Ejecutar síntesis automática del moderador si hay respuestas exitosas
+        moderator_synthesis = None
+        if successful_count >= 1:  # Si al menos una IA respondió exitosamente
+            try:
+                logger.info(f"🔬 Ejecutando síntesis automática del moderador...")
+                
+                # Crear objetos StandardAIResponse para la síntesis
+                from app.schemas.ai_response import StandardAIResponse, AIResponseStatus, AIProviderEnum
+                
+                mock_responses = []
+                for provider_name, resp_data in responses.items():
+                    if resp_data.get("success", False) and resp_data.get("content"):
+                        # Determinar el proveedor enum
+                        if provider_name.lower() == 'openai':
+                            provider_enum = AIProviderEnum.OPENAI
+                        elif provider_name.lower() == 'anthropic':
+                            provider_enum = AIProviderEnum.ANTHROPIC
+                        else:
+                            continue  # Saltar proveedores desconocidos
+                        
+                        mock_response = StandardAIResponse(
+                            response_text=resp_data["content"],
+                            status=AIResponseStatus.SUCCESS,
+                            ia_provider_name=provider_enum,
+                            latency_ms=resp_data.get("latency_ms", 0),
+                            error_message=None,
+                            timestamp=datetime.utcnow()
+                        )
+                        mock_responses.append(mock_response)
+                
+                if len(mock_responses) >= 1:  # Si tenemos al menos una respuesta para sintetizar
+                    # Ejecutar síntesis del moderador
+                    from app.services.ai_moderator import AIModerator
+                    moderator = AIModerator()
+                    
+                    synthesis_start = time.time()
+                    synthesis_result = await moderator.synthesize_responses(mock_responses)
+                    synthesis_time = int((time.time() - synthesis_start) * 1000)
+                    
+                    # ✅ NUEVO: Guardar el prompt del moderador en ia_prompts
+                    moderator_prompt_text = moderator.get_synthesis_prompt(mock_responses)
+                    moderator_prompt = await ia_prompt_crud.create_moderator_prompt(
+                        db=db,
+                        project_id=ia_prompt.project_id,
+                        context_session_id=ia_prompt.context_session_id,
+                        original_query=ia_prompt.original_query,
+                        generated_prompt=moderator_prompt_text,
+                        responses_to_synthesize=len(mock_responses)
+                    )
+                    
+                    if synthesis_result and synthesis_result.synthesis_text:
+                        # ✅ NUEVO: Guardar la respuesta del moderador en ia_responses
+                        moderator_response = await ia_prompt_crud.create_ia_response(
+                            db=db,
+                            ia_prompt_id=moderator_prompt.id,
+                            provider="moderator",
+                            response_text=synthesis_result.synthesis_text,
+                            status="success",
+                            latency_ms=synthesis_time,
+                            error_message=None
+                        )
+                        
+                        moderator_synthesis = {
+                            "provider": "moderator",
+                            "content": synthesis_result.synthesis_text,
+                            "quality": synthesis_result.quality,
+                            "key_themes": synthesis_result.key_themes,
+                            "recommendations": synthesis_result.recommendations,
+                            "processing_time_ms": synthesis_time,
+                            "success": True,
+                            "status": "success",
+                            "responses_synthesized": len(mock_responses),
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "prompt_id": str(moderator_prompt.id),  # ✅ NUEVO: ID del prompt del moderador
+                            "response_id": str(moderator_response.id)  # ✅ NUEVO: ID de la respuesta del moderador
+                        }
+                        
+                        # Crear evento de timeline para la síntesis
+                        if ia_prompt.context_session_id:
+                            try:
+                                await interaction_crud.create_timeline_event(
+                                    db=db,
+                                    session_id=ia_prompt.context_session_id,
+                                    event_type="moderator_synthesis",
+                                    content=f"Síntesis del moderador ejecutada - Calidad: {synthesis_result.quality}",
+                                    event_data={
+                                        "original_prompt_id": str(ia_prompt.id),  # Prompt original de las IAs
+                                        "moderator_prompt_id": str(moderator_prompt.id),  # ✅ NUEVO: Prompt del moderador
+                                        "moderator_response_id": str(moderator_response.id),  # ✅ NUEVO: Respuesta del moderador
+                                        "synthesis_quality": synthesis_result.quality,
+                                        "responses_synthesized": len(mock_responses),
+                                        "key_themes_count": len(synthesis_result.key_themes),
+                                        "recommendations_count": len(synthesis_result.recommendations),
+                                        "synthesis_length": len(synthesis_result.synthesis_text),
+                                        "processing_time_ms": synthesis_time,
+                                        "synthesized_at": datetime.utcnow().isoformat()
+                                    },
+                                    project_id=ia_prompt.project_id,  # Compatibilidad
+                                    user_id=UUID(current_user.id)  # Compatibilidad
+                                )
+                                await db.commit()
+                                logger.info(f"📝 Evento de timeline creado para síntesis del moderador")
+                            except Exception as timeline_error:
+                                logger.warning(f"⚠️ Error creando evento de timeline para síntesis: {timeline_error}")
+                        
+                        logger.info(f"✅ Síntesis del moderador completada - Calidad: {synthesis_result.quality}, Tiempo: {synthesis_time}ms")
+                        
+                        # ✅ NUEVO: Finalizar la sesión agregando la síntesis al contexto acumulado
+                        if ia_prompt.context_session_id:
+                            try:
+                                from app.crud import session as session_crud
+                                updated_session = await session_crud.finalize_session_with_synthesis(
+                                    db=db,
+                                    session_id=ia_prompt.context_session_id,
+                                    moderator_synthesis=synthesis_result.synthesis_text,
+                                    original_query=ia_prompt.original_query
+                                )
+                                if updated_session:
+                                    logger.info(f"✅ Sesión finalizada con síntesis - ID: {ia_prompt.context_session_id}, Status: {updated_session.status}")
+                                    
+                                    # Crear evento de timeline para el cierre de sesión
+                                    await interaction_crud.create_timeline_event(
+                                        db=db,
+                                        session_id=ia_prompt.context_session_id,
+                                        event_type="session_completed",
+                                        content=f"Sesión completada con síntesis del moderador",
+                                        event_data={
+                                            "original_prompt_id": str(ia_prompt.id),
+                                            "moderator_prompt_id": str(moderator_prompt.id),
+                                            "final_query": ia_prompt.original_query,
+                                            "context_length": len(updated_session.accumulated_context),
+                                            "synthesis_included": True,
+                                            "completed_at": datetime.utcnow().isoformat()
+                                        },
+                                        project_id=ia_prompt.project_id,
+                                        user_id=UUID(current_user.id)
+                                    )
+                                    await db.commit()
+                                    logger.info(f"📝 Evento de timeline creado para cierre de sesión")
+                                else:
+                                    logger.warning(f"⚠️ No se pudo finalizar la sesión {ia_prompt.context_session_id}")
+                            except Exception as session_error:
+                                logger.error(f"❌ Error finalizando sesión: {session_error}")
+                                # No fallar la operación principal por esto
+                    else:
+                        logger.warning("⚠️ La síntesis del moderador no produjo resultados")
+                        moderator_synthesis = {
+                            "provider": "moderator",
+                            "error": "No se pudo generar síntesis",
+                            "success": False,
+                            "status": "error",
+                            "processing_time_ms": synthesis_time,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                else:
+                    logger.warning("⚠️ No hay suficientes respuestas exitosas para síntesis")
+                    
+            except Exception as synthesis_error:
+                logger.error(f"❌ Error en síntesis automática: {synthesis_error}")
+                moderator_synthesis = {
+                    "provider": "moderator",
+                    "error": f"Error en síntesis: {str(synthesis_error)}",
+                    "success": False,
+                    "status": "error",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+        
+        # Preparar respuesta incluyendo la síntesis del moderador
         response_data = {
             "prompt_id": str(prompt_id),
             "prompt_used": prompt_to_use,
             "used_edited_version": request.use_edited_version,
             "responses": responses,
+            "moderator_synthesis": moderator_synthesis,  # ✅ NUEVO: Incluir síntesis
             "successful_responses": successful_count,
             "total_responses": len(responses),
+            "session_completed": moderator_synthesis and moderator_synthesis.get("success", False),  # ✅ NUEVO: Estado de sesión
+            "context_session_id": str(ia_prompt.context_session_id) if ia_prompt.context_session_id else None,  # ✅ NUEVO: ID de sesión
             "executed_at": datetime.utcnow().isoformat()
         }
         
-        logger.info(f"✅ Prompt ejecutado - {successful_count}/{len(responses)} respuestas exitosas")
+        synthesis_status = "con síntesis" if moderator_synthesis and moderator_synthesis.get("success") else "sin síntesis"
+        logger.info(f"✅ Prompt ejecutado - {successful_count}/{len(responses)} respuestas exitosas, {synthesis_status}")
         
         return response_data
         
@@ -1748,6 +1922,123 @@ async def execute_prompt(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error ejecutando prompt: {str(e)}"
+        )
+
+
+@router.get("/projects/{project_id}/prompts")
+async def get_project_prompts(
+    project_id: UUID,
+    current_user: SessionUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Obtener todos los prompts de un proyecto (IAs y Moderador)
+    """
+    try:
+        logger.info(f"📋 Obteniendo prompts del proyecto {project_id}")
+        
+        # Obtener todos los prompts clasificados
+        all_prompts = await ia_prompt_crud.get_all_prompts_by_project_with_type(
+            db=db,
+            project_id=project_id,
+            limit=100
+        )
+        
+        # Separar por tipo
+        ai_prompts = [p for p in all_prompts if not p["is_moderator"]]
+        moderator_prompts = [p for p in all_prompts if p["is_moderator"]]
+        
+        response_data = {
+            "project_id": str(project_id),
+            "total_prompts": len(all_prompts),
+            "ai_prompts": {
+                "count": len(ai_prompts),
+                "prompts": ai_prompts
+            },
+            "moderator_prompts": {
+                "count": len(moderator_prompts),
+                "prompts": moderator_prompts
+            },
+            "retrieved_at": datetime.utcnow().isoformat()
+        }
+        
+        logger.info(f"✅ Prompts obtenidos - {len(ai_prompts)} IAs, {len(moderator_prompts)} Moderador")
+        
+        return response_data
+        
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo prompts del proyecto {project_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error obteniendo prompts: {str(e)}"
+        )
+
+
+@router.get("/sessions/{session_id}/status")
+async def get_session_status(
+    session_id: UUID,
+    current_user: SessionUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Obtener el estado y contexto acumulado de una sesión
+    """
+    try:
+        logger.info(f"📋 Obteniendo estado de sesión {session_id}")
+        
+        # Obtener la sesión
+        from app.crud import session as session_crud
+        session = await session_crud.get_session(db, session_id)
+        
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sesión no encontrada"
+            )
+        
+        # Obtener eventos del timeline
+        timeline_events = await interaction_crud.get_session_timeline(db, session_id)
+        
+        # Contar eventos por tipo
+        event_counts = {}
+        for event in timeline_events:
+            event_type = event.event_type
+            event_counts[event_type] = event_counts.get(event_type, 0) + 1
+        
+        response_data = {
+            "session_id": str(session_id),
+            "status": session.status,
+            "accumulated_context": session.accumulated_context,
+            "context_length": len(session.accumulated_context),
+            "final_question": session.final_question,
+            "created_at": session.created_at.isoformat(),
+            "updated_at": session.updated_at.isoformat(),
+            "finished_at": session.finished_at.isoformat() if session.finished_at else None,
+            "timeline_events": {
+                "total_events": len(timeline_events),
+                "event_counts": event_counts,
+                "latest_events": [
+                    {
+                        "event_type": event.event_type,
+                        "content": event.content,
+                        "created_at": event.created_at.isoformat()
+                    }
+                    for event in timeline_events[-5:]  # Últimos 5 eventos
+                ]
+            }
+        }
+        
+        logger.info(f"✅ Estado de sesión obtenido - Status: {session.status}, Eventos: {len(timeline_events)}")
+        
+        return response_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo estado de sesión {session_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error obteniendo estado de sesión: {str(e)}"
         )
 
 
@@ -1794,5 +2085,80 @@ async def save_ia_response_with_prompt(
         await db.rollback()
         # No re-raise la excepción para no romper el flujo principal
 
+
+
+
+@router.get(
+    "/projects/{project_id}/context-sessions-summary",
+    response_model=Dict[str, Any],
+    summary="Obtener resumen de sesiones de contexto por proyecto",
+    description="Obtiene un resumen de todas las sesiones de contexto organizadas por chat para un proyecto"
+)
+async def get_project_context_sessions_summary(
+    project_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: SessionUser = Depends(require_auth)
+):
+    """
+    Obtiene un resumen de todas las sesiones de contexto de un proyecto organizadas por chat.
+    Este endpoint es para mostrar información general, no para navegar sesiones específicas.
+    """
+    try:
+        user_id = UUID(current_user.id)
+        
+        # Obtener todos los chats del proyecto del usuario
+        chats = await chat_crud.get_chats_by_project(db, project_id)
+        user_chats = [chat for chat in chats if chat.user_id == user_id]
+        
+        chats_with_sessions = []
+        total_sessions = 0
+        active_sessions = 0
+        
+        for chat in user_chats:
+            # Obtener sesiones del chat
+            sessions = await session_crud.get_sessions_by_chat(db, chat.id)
+            
+            sessions_data = []
+            for session in sessions:
+                timeline_count = await interaction_crud.count_interactions_by_session(db, session.id)
+                
+                session_summary = {
+                    "id": session.id,
+                    "order_index": session.order_index,
+                    "status": session.status,
+                    "context_length": len(session.accumulated_context),
+                    "timeline_events_count": timeline_count,
+                    "started_at": session.started_at,
+                    "finished_at": session.finished_at,
+                    "has_synthesis": "🔬 Síntesis del Moderador" in (session.accumulated_context or ""),
+                    "is_active": session.status == "active"
+                }
+                sessions_data.append(session_summary)
+                total_sessions += 1
+                if session.status == "active":
+                    active_sessions += 1
+            
+            if sessions_data:  # Solo incluir chats que tienen sesiones
+                chats_with_sessions.append({
+                    "chat_id": chat.id,
+                    "chat_title": chat.title,
+                    "sessions_count": len(sessions_data),
+                    "sessions": sessions_data
+                })
+        
+        return {
+            "project_id": project_id,
+            "chats_with_sessions": chats_with_sessions,
+            "total_chats": len(chats_with_sessions),
+            "total_sessions": total_sessions,
+            "active_sessions": active_sessions
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo resumen de sesiones del proyecto: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error obteniendo resumen de sesiones: {str(e)}"
+        )
 
  

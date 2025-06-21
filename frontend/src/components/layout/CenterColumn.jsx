@@ -56,6 +56,8 @@ const CenterColumn = ({ activeProject }) => {
     isContextBuilding: storeIsContextBuilding,
     sendContextMessage,
     finalizeContextSession,
+    refreshSessionContext,  // ✅ NUEVO: Función para refrescar contexto
+    loadProjectSessionsSummary,  // ✅ NUEVO: Función para recargar todas las sesiones
     clearLoadingStates
   } = useAppStore()
 
@@ -703,6 +705,11 @@ const CenterColumn = ({ activeProject }) => {
       // Convertir el objeto responses en array para que funcione con .map()
       const responsesArray = Object.values(executionData.responses || {})
       
+      // ✅ NUEVO: Agregar síntesis del moderador al array de respuestas si existe
+      if (executionData.moderator_synthesis) {
+        responsesArray.push(executionData.moderator_synthesis)
+      }
+      
       // Agregar las respuestas al flujo conversacional
       const aiResponsesInteraction = {
         id: Date.now() + 1,
@@ -710,12 +717,29 @@ const CenterColumn = ({ activeProject }) => {
         prompt_id: currentPromptId,
         execution_data: executionData,
         responses: responsesArray,
+        moderator_synthesis: executionData.moderator_synthesis, // ✅ NUEVO: Incluir síntesis
         successful_responses: executionData.successful_responses,
         total_responses: executionData.total_responses,
         timestamp: new Date()
       }
 
       setConversationFlow(prev => [...prev, aiResponsesInteraction])
+
+      // ✅ NUEVO: Refrescar contexto acumulado si la sesión se completó
+      if (executionData.session_completed && executionData.context_session_id) {
+        try {
+          console.log('🔄 Refrescando contexto acumulado después de completar sesión...')
+          await refreshSessionContext(executionData.context_session_id)
+          
+          // ✅ NUEVO: Recargar todas las sesiones para actualizar el sidebar
+          if (activeProject?.id) {
+            console.log('🔄 Recargando todas las sesiones de contexto...')
+            await loadProjectSessionsSummary(activeProject.id)
+          }
+        } catch (error) {
+          console.error('❌ Error refrescando contexto:', error)
+        }
+      }
 
       // Cambiar estado para habilitar el botón de síntesis
       setOrchestrateState('ready_for_synthesis')
@@ -1472,9 +1496,12 @@ const CenterColumn = ({ activeProject }) => {
                    /* Renderizar respuestas de IAs desde prompt */
                    <div className="space-y-4">
                      <div className="text-center p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-200">
-                       <h3 className="text-lg font-semibold text-green-800 mb-2">🤖 Respuestas de las IAs</h3>
+                       <h3 className="text-lg font-semibold text-green-800 mb-2">
+                         🤖 Respuestas de las IAs {interaction.moderator_synthesis && interaction.moderator_synthesis.success && '+ 🔬 Síntesis del Moderador'}
+                       </h3>
                        <p className="text-sm text-green-700 mb-2">
                          {interaction.successful_responses}/{interaction.total_responses} IAs respondieron exitosamente
+                         {interaction.moderator_synthesis && interaction.moderator_synthesis.success && ' • Síntesis completada'}
                        </p>
                        <p className="text-xs text-green-600 font-medium">
                          Prompt ID: {interaction.prompt_id}
@@ -1486,14 +1513,18 @@ const CenterColumn = ({ activeProject }) => {
                        {interaction.responses?.map((response, idx) => {
                          const isOpenAI = response.provider === 'openai'
                          const isAnthropic = response.provider === 'anthropic'
+                         const isModerator = response.provider === 'moderator'
                          const bgColor = isOpenAI ? 'bg-green-50 border-green-200' : 
                                         isAnthropic ? 'bg-orange-50 border-orange-200' : 
+                                        isModerator ? 'bg-purple-50 border-purple-200' :
                                         'bg-gray-50 border-gray-200'
                          const textColor = isOpenAI ? 'text-green-800' : 
                                           isAnthropic ? 'text-orange-800' : 
+                                          isModerator ? 'text-purple-800' :
                                           'text-gray-800'
                          const dotColor = isOpenAI ? 'bg-green-500' : 
                                          isAnthropic ? 'bg-orange-500' : 
+                                         isModerator ? 'bg-purple-500' :
                                          'bg-gray-500'
                          const accordionKey = `response-${interaction.id}-${idx}`
                          
@@ -1512,7 +1543,7 @@ const CenterColumn = ({ activeProject }) => {
                                <div className="flex items-center space-x-3">
                                  <div className={`w-3 h-3 ${dotColor} rounded-full`}></div>
                                  <span className={`font-medium ${textColor}`}>
-                                   {response.provider?.toUpperCase()} {response.model && `(${response.model})`}
+                                   {isModerator ? 'MODERADOR' : response.provider?.toUpperCase()} {response.model && `(${response.model})`}
                                  </span>
                                  <div className="flex items-center space-x-2 text-xs">
                                    {response.success ? (
@@ -1546,9 +1577,69 @@ const CenterColumn = ({ activeProject }) => {
                              {expandedPrompts[accordionKey] && (
                                <div className="px-4 pb-4 border-t border-opacity-30">
                                  {response.success ? (
-                                   <div className={`text-sm whitespace-pre-wrap ${textColor} leading-relaxed mt-3`}>
-                                     {response.content}
-                                   </div>
+                                   isModerator ? (
+                                     /* Renderizado especial para síntesis del moderador */
+                                     <div className="mt-3 space-y-4">
+                                       {/* Síntesis principal */}
+                                       <div className="bg-white rounded-lg border border-gray-200 p-4">
+                                         <h5 className="font-semibold text-purple-800 mb-3">📋 Síntesis</h5>
+                                         <div className={`text-sm whitespace-pre-wrap ${textColor} leading-relaxed`}>
+                                           {response.content}
+                                         </div>
+                                       </div>
+                                       
+                                       {/* Información adicional */}
+                                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                                         {response.quality && (
+                                           <div className="bg-purple-100 rounded p-2">
+                                             <span className="font-medium text-purple-800">Calidad:</span>
+                                             <span className="text-purple-700 ml-2">{response.quality}</span>
+                                           </div>
+                                         )}
+                                         {response.responses_synthesized && (
+                                           <div className="bg-purple-100 rounded p-2">
+                                             <span className="font-medium text-purple-800">Respuestas analizadas:</span>
+                                             <span className="text-purple-700 ml-2">{response.responses_synthesized}</span>
+                                           </div>
+                                         )}
+                                       </div>
+                                       
+                                       {/* Temas clave */}
+                                       {response.key_themes && response.key_themes.length > 0 && (
+                                         <div className="bg-blue-50 rounded-lg border border-blue-200 p-3">
+                                           <h6 className="font-medium text-blue-800 mb-2">🔑 Temas Clave</h6>
+                                           <ul className="space-y-1">
+                                             {response.key_themes.map((theme, themeIdx) => (
+                                               <li key={themeIdx} className="text-sm text-blue-700 flex items-start">
+                                                 <span className="text-blue-500 mr-2">•</span>
+                                                 {theme}
+                                               </li>
+                                             ))}
+                                           </ul>
+                                         </div>
+                                       )}
+                                       
+                                       {/* Recomendaciones */}
+                                       {response.recommendations && response.recommendations.length > 0 && (
+                                         <div className="bg-green-50 rounded-lg border border-green-200 p-3">
+                                           <h6 className="font-medium text-green-800 mb-2">💡 Recomendaciones</h6>
+                                           <ul className="space-y-1">
+                                             {response.recommendations.map((rec, recIdx) => (
+                                               <li key={recIdx} className="text-sm text-green-700 flex items-start">
+                                                 <span className="text-green-500 mr-2">•</span>
+                                                 {rec}
+                                               </li>
+                                             ))}
+                                           </ul>
+                                         </div>
+                                       )}
+                                     </div>
+                                   ) : (
+                                     /* Renderizado normal para IAs */
+                                     <div className={`text-sm whitespace-pre-wrap ${textColor} leading-relaxed mt-3`}>
+                                       {response.content}
+                                     </div>
+                                   )
                                  ) : (
                                    <div className="text-red-600 text-sm mt-3">
                                      ⚠️ {response.error}

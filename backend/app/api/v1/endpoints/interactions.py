@@ -72,21 +72,24 @@ async def get_interaction_history(
         # Convertir a summaries
         interaction_summaries = []
         for interaction in interactions:
-            # Parsear síntesis para obtener preview
+            # Parsear síntesis para obtener preview desde event_data
             synthesis_preview = "Sin síntesis disponible"
-            if interaction.moderator_synthesis_json:
-                import json
-                synthesis_data = json.loads(interaction.moderator_synthesis_json)
-                synthesis_text = synthesis_data.get("synthesis_text", "")
-                synthesis_preview = synthesis_text[:300] + "..." if len(synthesis_text) > 300 else synthesis_text
+            moderator_quality = "unknown"
+            
+            if interaction.event_data and isinstance(interaction.event_data, dict):
+                moderator_synthesis = interaction.event_data.get("moderator_synthesis", {})
+                if moderator_synthesis:
+                    synthesis_text = moderator_synthesis.get("synthesis_text", "")
+                    synthesis_preview = synthesis_text[:300] + "..." if len(synthesis_text) > 300 else synthesis_text
+                    moderator_quality = moderator_synthesis.get("quality", "unknown")
             
             summary = InteractionSummary(
                 id=interaction.id,
-                user_prompt=interaction.user_prompt_text[:200] + "..." if len(interaction.user_prompt_text) > 200 else interaction.user_prompt_text,
+                user_prompt=interaction.content[:200] + "..." if len(interaction.content) > 200 else interaction.content,
                 synthesis_preview=synthesis_preview,
-                moderator_quality=synthesis_data.get("quality", "unknown") if interaction.moderator_synthesis_json else "unknown",
+                moderator_quality=moderator_quality,
                 created_at=interaction.created_at,
-                processing_time_ms=interaction.processing_time_ms or 0
+                processing_time_ms=0  # Campo no disponible en el nuevo modelo
             )
             interaction_summaries.append(summary)
         
@@ -146,27 +149,25 @@ async def get_interaction_detail(
         # Convertir a formato de respuesta
         import json
         
-        # Parsear respuestas de IA
+        # Parsear respuestas de IA desde event_data
         ai_responses = []
-        if interaction.ai_responses_json:
-            ai_responses_data = json.loads(interaction.ai_responses_json)
-            # Aquí podrías convertir a StandardAIResponse si es necesario
-            ai_responses = ai_responses_data
-        
-        # Parsear síntesis del moderador
         moderator_synthesis = None
-        if interaction.moderator_synthesis_json:
-            moderator_synthesis = json.loads(interaction.moderator_synthesis_json)
         
-        # Crear evento de interacción
-        interaction_event = InteractionEvent(
+        if interaction.event_data and isinstance(interaction.event_data, dict):
+            ai_responses = interaction.event_data.get("ai_responses", [])
+            moderator_synthesis = interaction.event_data.get("moderator_synthesis")
+        
+        # Crear evento de interacción (usando el esquema, no el modelo de BD)
+        from app.schemas.interaction import InteractionEvent as InteractionEventSchema
+        
+        interaction_event = InteractionEventSchema(
             id=interaction.id,
             project_id=interaction.project_id,
-            user_prompt=interaction.user_prompt_text,
-            ai_responses=ai_responses,  # Como dict por ahora
+            user_prompt=interaction.content,
+            ai_responses=ai_responses,
             moderator_synthesis=moderator_synthesis,
             created_at=interaction.created_at,
-            processing_time_ms=interaction.processing_time_ms or 0  # Manejar valores None
+            processing_time_ms=0  # Campo no disponible en el nuevo modelo
         )
         
         logger.info(f"Detalles obtenidos para interacción {interaction_id}")

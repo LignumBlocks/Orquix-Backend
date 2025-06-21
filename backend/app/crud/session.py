@@ -27,6 +27,11 @@ async def create_session(
     # Obtener la sesión anterior si existe
     previous_session = await get_last_session(db, chat_id)
     
+    # ✅ NUEVO: Herencia de contexto - si no se proporciona contexto y hay sesión anterior
+    if not accumulated_context and previous_session and previous_session.accumulated_context:
+        accumulated_context = previous_session.accumulated_context
+        print(f"🔄 Heredando contexto de sesión anterior: {len(accumulated_context)} caracteres")
+    
     session = Session(
         chat_id=chat_id,
         previous_session_id=previous_session.id if previous_session else None,
@@ -148,6 +153,33 @@ async def complete_session(
 ) -> Optional[Session]:
     """Completar una sesión."""
     return await update_session_status(db, session_id, "completed", final_question)
+
+
+async def finalize_session_with_synthesis(
+    db: AsyncSession,
+    session_id: UUID,
+    moderator_synthesis: str,
+    original_query: str
+) -> Optional[Session]:
+    """Finalizar una sesión agregando la síntesis del moderador al contexto acumulado."""
+    session = await get_session(db, session_id)
+    if not session:
+        return None
+    
+    # Agregar la síntesis del moderador al contexto acumulado
+    synthesis_section = f"\n\n## 🔬 Síntesis del Moderador\n\n{moderator_synthesis}\n\n---\n"
+    updated_context = session.accumulated_context + synthesis_section
+    
+    # Actualizar la sesión con el nuevo contexto y marcarla como completada
+    session.accumulated_context = updated_context
+    session.final_question = original_query
+    session.status = "completed"
+    session.finished_at = datetime.utcnow()
+    session.updated_at = datetime.utcnow()
+    
+    await db.commit()
+    await db.refresh(session)
+    return session
 
 
 async def delete_session(db: AsyncSession, session_id: UUID) -> bool:

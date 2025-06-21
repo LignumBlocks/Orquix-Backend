@@ -31,7 +31,8 @@ const LeftSidebar = ({
     createChat = () => {},
     deleteChat = () => {},
     setActiveProject = () => {},
-    setActiveChat = () => {}
+    setActiveChat = () => {},
+    selectChatAndLoadContext = () => {}
   } = useAppStore()
 
   // Cargar proyectos al montar el componente
@@ -75,8 +76,34 @@ const LeftSidebar = ({
     }
   }
 
-  const handleChatClick = (chat) => {
-    setActiveChat(chat)
+  const handleChatClick = async (chat) => {
+    try {
+      // Encontrar el proyecto al que pertenece este chat
+      const chatProject = projects.find(p => {
+        const chatsForProject = projectChats[p.id] || []
+        return chatsForProject.some(c => c.id === chat.id)
+      })
+      
+      console.log('🔍 Chat click - Proyecto encontrado:', {
+        chatId: chat.id,
+        chatTitle: chat.title,
+        projectId: chatProject?.id,
+        projectName: chatProject?.name,
+        chatProjectId: chat.project_id
+      })
+      
+      // Usar la nueva función que carga todo el contexto del chat
+      await selectChatAndLoadContext(chat, chatProject)
+      
+      console.log('✅ Chat seleccionado y contexto cargado:', {
+        chatId: chat.id,
+        chatTitle: chat.title
+      })
+    } catch (error) {
+      console.error('❌ Error seleccionando chat:', error)
+      // Fallback: al menos seleccionar el chat
+      setActiveChat(chat)
+    }
     
     // Cerrar sidebar en móvil después de seleccionar chat
     if (isMobile && onClose) {

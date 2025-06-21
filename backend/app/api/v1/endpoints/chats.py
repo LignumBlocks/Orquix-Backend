@@ -492,4 +492,89 @@ async def delete_session(
         )
     
     logger.info(f"🗑️ Sesión eliminada: {session_id}")
-    return {"message": "Session deleted successfully"} 
+    return {"message": "Session deleted successfully"}
+
+
+@router.get(
+    "/chats/{chat_id}/sessions/detailed",
+    response_model=Dict[str, Any],
+    summary="Obtener sesiones detalladas del chat",
+    description="Obtiene todas las sesiones de un chat con información detallada para el sidebar"
+)
+async def get_chat_sessions_detailed(
+    chat_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: SessionUser = Depends(require_auth)
+):
+    """
+    Obtener sesiones de un chat con información detallada para mostrar en el sidebar.
+    Incluye contexto, eventos de timeline, y estado de síntesis.
+    """
+    try:
+        # Verificar que el chat existe y pertenece al usuario
+        chat = await chat_crud.get_chat(db, chat_id)
+        if not chat:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Chat not found"
+            )
+        
+        user_id = UUID(current_user.id)
+        if chat.user_id != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes acceso a este chat"
+            )
+        
+        # Obtener todas las sesiones del chat
+        sessions = await session_crud.get_sessions_by_chat(db, chat_id)
+        
+        sessions_detailed = []
+        active_session_id = None
+        
+        for session in sessions:
+            # Contar eventos de timeline
+            timeline_count = await interaction_crud.count_interactions_by_session(db, session.id)
+            
+            session_data = {
+                "id": session.id,
+                "order_index": session.order_index,
+                "status": session.status,
+                "accumulated_context": session.accumulated_context,
+                "context_length": len(session.accumulated_context),
+                "final_question": session.final_question,
+                "started_at": session.started_at,
+                "finished_at": session.finished_at,
+                "updated_at": session.updated_at,
+                "timeline_events_count": timeline_count,
+                "is_active": session.status == "active",
+                "has_synthesis": "🔬 Síntesis del Moderador" in (session.accumulated_context or "")
+            }
+            
+            sessions_detailed.append(session_data)
+            
+            # Marcar sesión activa
+            if session.status == "active":
+                active_session_id = session.id
+        
+        # Ordenar por order_index (más reciente primero)
+        sessions_detailed.sort(key=lambda s: s["order_index"], reverse=True)
+        
+        return {
+            "chat_id": chat_id,
+            "chat_title": chat.title,
+            "sessions": sessions_detailed,
+            "total_sessions": len(sessions_detailed),
+            "active_session_id": active_session_id,
+            "sessions_with_synthesis": len([s for s in sessions_detailed if s["has_synthesis"]]),
+            "completed_sessions": len([s for s in sessions_detailed if s["status"] == "completed"])
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo sesiones detalladas del chat {chat_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error obteniendo sesiones detalladas: {str(e)}"
+        ) 

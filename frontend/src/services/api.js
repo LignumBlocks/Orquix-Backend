@@ -163,6 +163,24 @@ const api = {
     }
   },
 
+  // ✅ NUEVO: Obtener sesiones detalladas de un chat específico
+  getChatSessionsDetailed: async (chatId) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/chats/${chatId}/sessions/detailed`, {
+      method: 'GET',
+      headers: getAuthHeaders()
+    })
+    return handleResponse(response)
+  },
+
+  // ✅ NUEVO: Obtener resumen de sesiones de contexto por proyecto
+  getProjectContextSessionsSummary: async (projectId) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/context-chat/projects/${projectId}/context-sessions-summary`, {
+      method: 'GET',
+      headers: getAuthHeaders()
+    })
+    return handleResponse(response)
+  },
+
   // Finalizar construcción de contexto
   finalizeContextSession: async (sessionId, finalQuestion) => {
     const response = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${sessionId}/finalize`, {

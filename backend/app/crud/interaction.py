@@ -75,6 +75,17 @@ async def count_session_events(
     return result.scalar() or 0
 
 
+# ✅ ALIAS para compatibilidad
+async def count_interactions_by_session(
+    db: AsyncSession,
+    session_id: UUID
+) -> int:
+    """
+    Alias para count_session_events - mantener compatibilidad.
+    """
+    return await count_session_events(db, session_id)
+
+
 async def get_events_by_type(
     db: AsyncSession,
     session_id: UUID,

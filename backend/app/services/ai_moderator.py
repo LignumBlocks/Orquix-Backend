@@ -180,6 +180,10 @@ Por favor, genera el meta-análisis siguiendo exactamente la estructura especifi
 
         return prompt
     
+    def get_synthesis_prompt(self, responses: List[StandardAIResponse]) -> str:
+        """Método público para obtener el prompt de síntesis (para guardar en BD)"""
+        return self._create_synthesis_prompt(responses)
+    
     def _extract_synthesis_components(self, synthesis_text: str) -> Dict[str, Any]:
         """Extrae componentes estructurados de la síntesis v2.0 con meta-análisis profesional"""
         components = {

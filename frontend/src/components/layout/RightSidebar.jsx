@@ -196,6 +196,49 @@ const RightSidebar = ({ isMobile = false }) => {
 
 // Componente para el tab de Contexto
 const ContextTab = ({ accumulatedContext, contextMessages, contextBuildingMode }) => {
+  const { 
+    contextSessionId, 
+    activeProject,
+    allContextSessions,
+    loadingContextSessions,
+    loadProjectSessionsSummary,
+    selectContextSession,
+    refreshSessionContext
+  } = useAppStore()
+  
+  const [sessionStatus, setSessionStatus] = useState(null)
+  const [expandedSessions, setExpandedSessions] = useState(new Set())
+  const [loadingStatus, setLoadingStatus] = useState(false)
+
+  // Función para obtener el estado de la sesión
+  const fetchSessionStatus = async () => {
+    if (!contextSessionId) return
+
+    setLoadingStatus(true)
+    try {
+      const response = await fetch(`http://localhost:8000/api/v1/context-chat/sessions/${contextSessionId}/status`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer dev-mock-token-12345'
+        }
+      })
+
+      if (response.ok) {
+        const statusData = await response.json()
+        setSessionStatus(statusData)
+      }
+    } catch (error) {
+      console.error('Error obteniendo estado de sesión:', error)
+    } finally {
+      setLoadingStatus(false)
+    }
+  }
+
+  // Obtener estado al cambiar la sesión
+  useEffect(() => {
+    fetchSessionStatus()
+  }, [contextSessionId])
   const formatContext = (context) => {
     if (!context || !context.trim()) {
       return "No hay contexto disponible en esta sesión."
@@ -259,84 +302,286 @@ const ContextTab = ({ accumulatedContext, contextMessages, contextBuildingMode }
 
   const stats = getContextStats()
 
+  // Cargar sesiones al montar o cambiar proyecto
+  useEffect(() => {
+    if (activeProject?.id) {
+      loadProjectSessionsSummary(activeProject.id)
+    }
+  }, [activeProject?.id])
+
+  // Funciones para manejar acordeones
+  const toggleSessionExpansion = (sessionId) => {
+    const newExpanded = new Set(expandedSessions)
+    if (newExpanded.has(sessionId)) {
+      newExpanded.delete(sessionId)
+    } else {
+      newExpanded.add(sessionId)
+    }
+    setExpandedSessions(newExpanded)
+  }
+
+  const handleSelectSession = (sessionId) => {
+    selectContextSession(sessionId)
+    // Expandir automáticamente la sesión seleccionada
+    setExpandedSessions(prev => new Set([...prev, sessionId]))
+  }
+
+  const formatDate = (dateString) => {
+    const date = new Date(dateString)
+    const now = new Date()
+    const diffInHours = (now - date) / (1000 * 60 * 60)
+    
+    if (diffInHours < 1) {
+      return 'Hace unos minutos'
+    } else if (diffInHours < 24) {
+      return `Hace ${Math.floor(diffInHours)} horas`
+    } else {
+      return date.toLocaleDateString('es-ES', {
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    }
+  }
+
   return (
-    <div className="p-4 h-full custom-scrollbar overflow-y-auto">
-      {/* Header con estadísticas */}
-      <div className="mb-4">
+    <div className="h-full flex flex-col">
+      {/* Header con botón de actualizar */}
+      <div className="p-4 border-b border-gray-200">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold text-gray-900">
-            Contexto Actual
+            Contexto del Chat
           </h3>
-          {contextBuildingMode && (
-            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
-              Construyendo...
+          <button
+            onClick={() => activeProject?.id && loadProjectSessionsSummary(activeProject.id)}
+            disabled={loadingContextSessions}
+            className="text-gray-400 hover:text-gray-600 p-1"
+            title="Actualizar sesiones"
+          >
+            <RefreshCwIcon className={`w-4 h-4 ${loadingContextSessions ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+        
+        {/* Estadísticas generales */}
+        <div className="text-xs text-gray-500">
+          {allContextSessions.length} sesiones total
+          {allContextSessions.filter(s => s.is_active).length > 0 && (
+            <span className="ml-2 text-blue-600">
+              • {allContextSessions.filter(s => s.is_active).length} activa
             </span>
           )}
         </div>
-        
-        {/* Estadísticas del contexto */}
-        <div className="grid grid-cols-3 gap-2 text-xs">
-          <div className="bg-gray-50 rounded p-2 text-center">
-            <div className="font-medium text-gray-900">{stats.words}</div>
-            <div className="text-gray-500">Palabras</div>
-          </div>
-          <div className="bg-gray-50 rounded p-2 text-center">
-            <div className="font-medium text-gray-900">{stats.chars}</div>
-            <div className="text-gray-500">Caracteres</div>
-          </div>
-          <div className="bg-gray-50 rounded p-2 text-center">
-            <div className="font-medium text-gray-900">{stats.sections}</div>
-            <div className="text-gray-500">Secciones</div>
-          </div>
-        </div>
       </div>
 
-      {/* Contenido del contexto */}
-      <div className="border border-gray-200 rounded-lg bg-white">
-        <div className="p-3">
-          <div className="text-xs font-medium text-gray-700 mb-2 flex items-center">
-            <FileTextIcon className="w-3 h-3 mr-1" />
-            Información Acumulada
+      {/* Contexto Actual Prominente */}
+      <div className="border-b border-gray-200 bg-blue-50">
+        <div className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-semibold text-blue-900">
+              📄 Contexto Actual
+            </h4>
+            {contextSessionId && (
+              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                Sesión activa
+              </span>
+            )}
           </div>
           
-          <div className="max-h-96 overflow-y-auto custom-scrollbar">
-            {accumulatedContext ? (
-              <div className="space-y-2">
-                {formatContext(accumulatedContext)}
-              </div>
-            ) : (
-              <div className="text-center py-8 text-gray-400">
-                <FileTextIcon className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                <p className="text-xs">No hay contexto disponible</p>
-                <p className="text-xs mt-1">Inicia una conversación para construir contexto</p>
+          {/* Stats del contexto actual */}
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="bg-white rounded p-2 text-center">
+              <div className="font-medium text-blue-900 text-xs">{stats.chars}</div>
+              <div className="text-blue-600 text-xs">Caracteres</div>
+            </div>
+            <div className="bg-white rounded p-2 text-center">
+              <div className="font-medium text-blue-900 text-xs">{stats.words}</div>
+              <div className="text-blue-600 text-xs">Palabras</div>
+            </div>
+            <div className="bg-white rounded p-2 text-center">
+              <div className="font-medium text-blue-900 text-xs">{stats.sections}</div>
+              <div className="text-blue-600 text-xs">Secciones</div>
+            </div>
+          </div>
+
+          {/* Contexto expandible */}
+          <div className="bg-white border border-blue-200 rounded-lg">
+            <button
+              onClick={() => setExpandedSessions(prev => {
+                const newSet = new Set(prev)
+                if (newSet.has('current-context')) {
+                  newSet.delete('current-context')
+                } else {
+                  newSet.add('current-context')
+                }
+                return newSet
+              })}
+              className="w-full p-3 text-left hover:bg-blue-50 transition-colors flex items-center justify-between"
+            >
+              <span className="text-sm font-medium text-gray-900">
+                Ver contexto completo
+              </span>
+              {expandedSessions.has('current-context') ? (
+                <ChevronDownIcon className="w-4 h-4 text-gray-400" />
+              ) : (
+                <ChevronRightIcon className="w-4 h-4 text-gray-400" />
+              )}
+            </button>
+            
+            {expandedSessions.has('current-context') && (
+              <div className="border-t border-blue-100 p-3 bg-gray-50 max-h-64 overflow-y-auto custom-scrollbar">
+                <div className="text-sm text-gray-700 leading-relaxed">
+                  {accumulatedContext ? (
+                    <div className="space-y-2">
+                      {formatContext(accumulatedContext)}
+                    </div>
+                  ) : (
+                    <div className="text-center text-gray-400 py-4">
+                      <FileTextIcon className="w-6 h-6 mx-auto mb-2 opacity-50" />
+                      <p className="text-xs">No hay contexto disponible</p>
+                      <p className="text-xs mt-1">Inicia una conversación para generar contexto</p>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Historial de mensajes del context building */}
-      {contextMessages && contextMessages.length > 0 && (
-        <div className="mt-4">
-          <div className="text-xs font-medium text-gray-700 mb-2">
-            Historial de Construcción ({(contextMessages || []).length} mensajes)
-          </div>
-          <div className="space-y-2 max-h-32 overflow-y-auto custom-scrollbar">
-            {(contextMessages || []).slice(-3).map((msg, index) => (
-              <div key={index} className="bg-gray-50 rounded p-2 text-xs">
-                <div className="font-medium text-gray-600 mb-1">
-                  Usuario: {(msg.user_message || '').substring(0, 50)}
-                  {(msg.user_message || '').length > 50 && '...'}
+      {/* Lista de sesiones individuales */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
+        <div className="p-4">
+          <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center">
+            📋 Historial de Sesiones
+            <span className="ml-2 text-xs text-gray-500">({allContextSessions.length})</span>
+          </h4>
+          
+          {loadingContextSessions ? (
+            <div className="text-center py-8">
+              <LoaderIcon className="w-6 h-6 animate-spin mx-auto mb-2 text-gray-400" />
+              <p className="text-xs text-gray-500">Cargando sesiones...</p>
+            </div>
+          ) : allContextSessions.length === 0 ? (
+            <div className="text-center text-gray-400 py-8">
+              <FileTextIcon className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p className="text-xs">No hay sesiones de contexto</p>
+              <p className="text-xs mt-1">Inicia una conversación para crear la primera sesión</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {allContextSessions.map((session) => (
+                <div key={session.id} className="border border-gray-200 rounded-lg bg-white">
+                  {/* Header del acordeón */}
+                  <div className={`p-3 ${contextSessionId === session.id ? 'bg-blue-50 border-blue-200' : ''}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2 flex-1 min-w-0">
+                        {/* Indicador de estado */}
+                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                          session.is_active ? 'bg-blue-500' : 
+                          session.has_synthesis ? 'bg-green-500' : 'bg-gray-400'
+                        }`}></div>
+                        
+                        {/* Información de la sesión - clickeable para expandir */}
+                        <button
+                          onClick={() => toggleSessionExpansion(session.id)}
+                          className="flex-1 min-w-0 text-left hover:bg-gray-100 rounded p-1 transition-colors"
+                        >
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xs font-medium text-gray-900 truncate">
+                              Sesión #{session.order_index}
+                            </span>
+                            {session.is_active && (
+                              <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                                Activa
+                              </span>
+                            )}
+                            {session.has_synthesis && (
+                              <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">
+                                Con síntesis
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            {formatDate(session.started_at)} • {session.context_length} caracteres
+                          </div>
+                        </button>
+                      </div>
+                      
+                      {/* Botones de acción - separados del botón principal */}
+                      <div className="flex items-center space-x-1 flex-shrink-0">
+                        {contextSessionId !== session.id && (
+                          <button
+                            onClick={() => handleSelectSession(session.id)}
+                            className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-2 py-1 rounded"
+                          >
+                            Seleccionar
+                          </button>
+                        )}
+                        <button
+                          onClick={() => toggleSessionExpansion(session.id)}
+                          className="p-1 hover:bg-gray-100 rounded transition-colors"
+                        >
+                          {expandedSessions.has(session.id) ? (
+                            <ChevronDownIcon className="w-4 h-4 text-gray-400" />
+                          ) : (
+                            <ChevronRightIcon className="w-4 h-4 text-gray-400" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Contenido expandido del acordeón */}
+                  {expandedSessions.has(session.id) && (
+                    <div className="border-t border-gray-100 p-3 bg-gray-50">
+                      {/* Estadísticas de la sesión */}
+                      <div className="grid grid-cols-2 gap-2 mb-3 text-xs">
+                        <div className="bg-white rounded p-2 text-center">
+                          <div className="font-medium text-gray-900">{session.timeline_events_count}</div>
+                          <div className="text-gray-500">Eventos</div>
+                        </div>
+                        <div className="bg-white rounded p-2 text-center">
+                          <div className="font-medium text-gray-900">
+                            {Math.round(session.context_length / 4)}
+                          </div>
+                          <div className="text-gray-500">Palabras</div>
+                        </div>
+                      </div>
+
+                      {/* Vista previa del contexto */}
+                      <div className="bg-white border rounded p-2">
+                        <div className="text-xs font-medium text-gray-700 mb-1">
+                          Vista previa del contexto:
+                        </div>
+                        <div className="text-xs text-gray-600 leading-relaxed max-h-20 overflow-y-auto custom-scrollbar">
+                          {session.accumulated_context ? 
+                            session.accumulated_context.substring(0, 200) + 
+                            (session.accumulated_context.length > 200 ? '...' : '') :
+                            'Sin contexto disponible'
+                          }
+                        </div>
+                      </div>
+
+                      {/* Pregunta final si existe */}
+                      {session.final_question && (
+                        <div className="mt-2 bg-white border rounded p-2">
+                          <div className="text-xs font-medium text-gray-700 mb-1">
+                            Pregunta final:
+                          </div>
+                          <div className="text-xs text-gray-600 leading-relaxed">
+                            {session.final_question}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="text-gray-500">
-                  IA: {(msg.ai_response || '').substring(0, 80)}
-                  {(msg.ai_response || '').length > 80 && '...'}
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   )
 }
