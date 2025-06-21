@@ -3,14 +3,36 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
+from pydantic import BaseModel
 
 import openai
 from app.core.config import settings
-from app.models.context_session import (
-    ContextMessage, 
-    ContextChatResponse,
-    ContextSession
-)
+
+# Modelos temporales para compatibilidad
+class ContextMessage(BaseModel):
+    role: str
+    content: str
+    timestamp: datetime
+    message_type: Optional[str] = None
+
+class ContextChatResponse(BaseModel):
+    session_id: UUID
+    ai_response: str
+    message_type: str
+    accumulated_context: str
+    suggestions: List[str]
+    context_elements_count: int
+    suggested_final_question: Optional[str] = None
+
+class ContextSession(BaseModel):
+    id: UUID
+    project_id: UUID
+    user_id: Optional[UUID]
+    conversation_history: List[ContextMessage]
+    accumulated_context: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
 
 logger = logging.getLogger(__name__)
 

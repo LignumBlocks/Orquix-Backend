@@ -6,51 +6,125 @@ import json
 from sqlmodel import select, and_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.models import InteractionEvent
-from app.schemas.interaction import InteractionEventCreate
+from app.models.models import InteractionEvent, Session
+from app.schemas.interaction import InteractionEventCreate, InteractionEventResponse
 
+
+# ✅ NUEVAS FUNCIONES PARA TIMELINE
+
+async def create_timeline_event(
+    db: AsyncSession,
+    session_id: UUID,
+    event_type: str,
+    content: str,
+    event_data: Optional[Dict[str, Any]] = None,
+    project_id: Optional[UUID] = None,
+    user_id: Optional[UUID] = None
+) -> InteractionEvent:
+    """
+    Crear un nuevo evento en el timeline de una sesión.
+    """
+    
+    db_event = InteractionEvent(
+        session_id=session_id,
+        event_type=event_type,
+        content=content,
+        event_data=event_data,
+        project_id=project_id,  # Compatibilidad
+        user_id=user_id,  # Compatibilidad
+        user_prompt_text=content if event_type == "user_message" else None  # Compatibilidad
+    )
+    
+    db.add(db_event)
+    await db.flush()
+    await db.refresh(db_event)
+    
+    return db_event
+
+
+async def get_session_timeline(
+    db: AsyncSession,
+    session_id: UUID,
+    skip: int = 0,
+    limit: int = 100
+) -> List[InteractionEvent]:
+    """
+    Obtener el timeline completo de eventos de una sesión.
+    """
+    query = select(InteractionEvent).where(
+        InteractionEvent.session_id == session_id
+    ).order_by(InteractionEvent.created_at.asc()).offset(skip).limit(limit)
+    
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+async def count_session_events(
+    db: AsyncSession,
+    session_id: UUID
+) -> int:
+    """
+    Contar el número de eventos en una sesión.
+    """
+    from sqlmodel import func
+    
+    query = select(func.count(InteractionEvent.id)).where(
+        InteractionEvent.session_id == session_id
+    )
+    result = await db.execute(query)
+    return result.scalar() or 0
+
+
+async def get_events_by_type(
+    db: AsyncSession,
+    session_id: UUID,
+    event_type: str
+) -> List[InteractionEvent]:
+    """
+    Obtener eventos de un tipo específico en una sesión.
+    """
+    query = select(InteractionEvent).where(
+        and_(
+            InteractionEvent.session_id == session_id,
+            InteractionEvent.event_type == event_type
+        )
+    ).order_by(InteractionEvent.created_at.asc())
+    
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+# ✅ FUNCIONES LEGACY (mantener para compatibilidad)
 
 async def create_interaction(
     db: AsyncSession,
     interaction_data: Dict[str, Any]
 ) -> InteractionEvent:
     """
-    Crear un nuevo evento de interacción en la base de datos.
+    Crear un nuevo evento de interacción en la base de datos - LEGACY.
     """
     
-    # Convertir datos del dict a modelo de creación
-    interaction_create = InteractionEventCreate(
-        id=UUID(interaction_data["id"]),
-        project_id=UUID(interaction_data["project_id"]),
-        user_id=UUID(interaction_data["user_id"]),
-        user_prompt=interaction_data["user_prompt"],
-        ai_responses=interaction_data["ai_responses"],
-        moderator_synthesis=interaction_data["moderator_synthesis"],
-        context_used=interaction_data["context_used"],
-        context_preview=interaction_data.get("context_preview"),
-        processing_time_ms=interaction_data["processing_time_ms"],
-        created_at=datetime.fromisoformat(interaction_data["created_at"])
+    # Extraer session_id del interaction_data o usar None
+    session_id = interaction_data.get("session_id")
+    if not session_id:
+        # Si no hay session_id, crear un evento legacy
+        # Buscar o crear una sesión temporal
+        pass
+    
+    # Crear evento usando la nueva estructura
+    return await create_timeline_event(
+        db=db,
+        session_id=UUID(session_id) if session_id else None,
+        event_type="user_message",  # Asumir que es mensaje de usuario
+        content=interaction_data.get("user_prompt", ""),
+        event_data={
+            "ai_responses": interaction_data.get("ai_responses", []),
+            "moderator_synthesis": interaction_data.get("moderator_synthesis", {}),
+            "processing_time_ms": interaction_data.get("processing_time_ms", 0)
+        },
+        project_id=UUID(interaction_data["project_id"]) if interaction_data.get("project_id") else None,
+        user_id=UUID(interaction_data["user_id"]) if interaction_data.get("user_id") else None
     )
-    
-    # Crear instancia del modelo de base de datos
-    db_interaction = InteractionEvent(
-        id=interaction_create.id,
-        project_id=interaction_create.project_id,
-        user_id=interaction_create.user_id,
-        user_prompt_text=interaction_create.user_prompt,
-        ai_responses_json=json.dumps(interaction_create.ai_responses),
-        moderator_synthesis_json=json.dumps(interaction_create.moderator_synthesis),
-        context_used=interaction_create.context_used,
-        context_preview=interaction_create.context_preview,
-        processing_time_ms=interaction_create.processing_time_ms,
-        created_at=interaction_create.created_at
-    )
-    
-    db.add(db_interaction)
-    await db.flush()
-    await db.refresh(db_interaction)
-    
-    return db_interaction
 
 
 async def get_interaction_by_id(
@@ -60,7 +134,7 @@ async def get_interaction_by_id(
     user_id: UUID
 ) -> Optional[InteractionEvent]:
     """
-    Obtener una interacción específica por ID.
+    Obtener una interacción específica por ID - LEGACY.
     """
     query = select(InteractionEvent).where(
         and_(
@@ -83,7 +157,7 @@ async def get_project_interactions(
     order_direction: str = "desc"
 ) -> List[InteractionEvent]:
     """
-    Obtener las interacciones de un proyecto con paginación.
+    Obtener las interacciones de un proyecto con paginación - LEGACY.
     """
     query = select(InteractionEvent).where(
         and_(
@@ -112,7 +186,7 @@ async def delete_interaction(
     user_id: UUID
 ) -> bool:
     """
-    Eliminar una interacción específica.
+    Eliminar una interacción específica - LEGACY.
     """
     interaction = await get_interaction_by_id(db, interaction_id, project_id, user_id)
     
@@ -129,7 +203,7 @@ async def count_project_interactions(
     user_id: UUID
 ) -> int:
     """
-    Contar el número total de interacciones en un proyecto.
+    Contar el número total de interacciones en un proyecto - LEGACY.
     """
     from sqlmodel import func
     
@@ -149,7 +223,7 @@ async def get_interaction_stats(
     user_id: UUID
 ) -> Dict[str, Any]:
     """
-    Obtener estadísticas básicas de las interacciones de un proyecto.
+    Obtener estadísticas básicas de las interacciones de un proyecto - LEGACY.
     """
     from sqlmodel import func
     
@@ -174,4 +248,6 @@ async def get_interaction_stats(
         "average_processing_time_ms": int(stats.avg_processing_time or 0),
         "first_interaction_date": stats.first_interaction,
         "last_interaction_date": stats.last_interaction
-    } 
+    }
+
+

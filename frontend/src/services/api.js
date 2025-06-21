@@ -52,12 +52,83 @@ const api = {
   },
 
   // ==========================================
-  // NUEVO: Construcción de Contexto Conversacional
+  // NUEVO: Arquitectura Chat + Session
   // ==========================================
   
+  // Crear o obtener chat por defecto para un proyecto
+  getOrCreateDefaultChat: async (projectId) => {
+    // Primero intentar obtener chats existentes
+    const chatsResponse = await fetch(`${config.apiUrl}/api/v1/projects/${projectId}/chats`, {
+      method: 'GET',
+      headers: getAuthHeaders()
+    })
+    
+    if (chatsResponse.ok) {
+      const chatsData = await chatsResponse.json()
+      if (chatsData.chats && chatsData.chats.length > 0) {
+        return chatsData.chats[0] // Retornar primer chat existente
+      }
+    }
+    
+    // Si no hay chats, crear uno nuevo
+    const createResponse = await fetch(`${config.apiUrl}/api/v1/projects/${projectId}/chats`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        title: "Construcción de Contexto"
+      })
+    })
+    return handleResponse(createResponse)
+  },
+
   // Enviar mensaje en construcción de contexto
   sendContextMessage: async (projectId, userMessage, sessionId = null) => {
-    const response = await fetch(`${config.apiUrl}/api/v1/context-chat/projects/${projectId}/context-chat`, {
+    // Si no hay sessionId, necesitamos crear chat y sesión
+    if (!sessionId) {
+      // Obtener o crear chat inline para evitar referencia circular
+      let chat
+      try {
+        const chatsResponse = await fetch(`${config.apiUrl}/api/v1/projects/${projectId}/chats`, {
+          method: 'GET',
+          headers: getAuthHeaders()
+        })
+        
+        if (chatsResponse.ok) {
+          const chatsData = await chatsResponse.json()
+          if (chatsData.chats && chatsData.chats.length > 0) {
+            chat = chatsData.chats[0]
+          }
+        }
+        
+        if (!chat) {
+          const createResponse = await fetch(`${config.apiUrl}/api/v1/projects/${projectId}/chats`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({
+              title: "Construcción de Contexto"
+            })
+          })
+          chat = await handleResponse(createResponse)
+        }
+      } catch (error) {
+        throw new Error(`Error obteniendo/creando chat: ${error.message}`)
+      }
+      
+      // Crear nueva sesión
+      const sessionResponse = await fetch(`${config.apiUrl}/api/v1/chats/${chat.id}/sessions`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          accumulated_context: "",
+          status: "active"
+        })
+      })
+      const session = await handleResponse(sessionResponse)
+      sessionId = session.id
+    }
+
+         // Enviar mensaje usando endpoint de context-chat (mantener compatibilidad)
+     const response = await fetch(`${config.apiUrl}/api/v1/context-chat/projects/${projectId}/context-chat`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({
@@ -68,25 +139,31 @@ const api = {
     return handleResponse(response)
   },
 
-  // Obtener sesión de contexto actual
+  // Obtener sesión específica
   getContextSession: async (sessionId) => {
-    const response = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${sessionId}`, {
+    const response = await fetch(`${config.apiUrl}/api/v1/sessions/${sessionId}`, {
       method: 'GET',
       headers: getAuthHeaders()
     })
     return handleResponse(response)
   },
 
-  // Obtener sesión de contexto activa para un proyecto
+  // Obtener sesión activa para un proyecto
   getActiveContextSession: async (projectId) => {
-    const response = await fetch(`${config.apiUrl}/api/v1/context-chat/projects/${projectId}/active-context-session`, {
-      method: 'GET',
-      headers: getAuthHeaders()
-    })
-    return handleResponse(response)
+    try {
+      // Usar endpoint de compatibilidad
+      const response = await fetch(`${config.apiUrl}/api/v1/context-chat/projects/${projectId}/active-context-session`, {
+        method: 'GET',
+        headers: getAuthHeaders()
+      })
+      return handleResponse(response)
+    } catch (error) {
+      // Si no hay sesión activa, retornar null
+      return null
+    }
   },
 
-  // Finalizar construcción de contexto y enviar a IAs principales
+  // Finalizar construcción de contexto
   finalizeContextSession: async (sessionId, finalQuestion) => {
     const response = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${sessionId}/finalize`, {
       method: 'POST',
@@ -95,6 +172,47 @@ const api = {
         session_id: sessionId,
         final_question: finalQuestion
       })
+    })
+    return handleResponse(response)
+  },
+
+  // ==========================================
+  // FUNCIONES ESPECÍFICAS PARA CHATS
+  // ==========================================
+  
+  // Obtener todos los chats de un proyecto
+  getProjectChats: async (projectId) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/projects/${projectId}/chats`, {
+      method: 'GET',
+      headers: getAuthHeaders()
+    })
+    return handleResponse(response)
+  },
+
+  // Crear un nuevo chat
+  createChat: async (projectId, title) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/projects/${projectId}/chats`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ title })
+    })
+    return handleResponse(response)
+  },
+
+  // Eliminar un chat
+  deleteChat: async (chatId) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/chats/${chatId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    })
+    return handleResponse(response)
+  },
+
+  // Obtener sesiones de un chat
+  getChatSessions: async (chatId) => {
+    const response = await fetch(`${config.apiUrl}/api/v1/chats/${chatId}/sessions`, {
+      method: 'GET',
+      headers: getAuthHeaders()
     })
     return handleResponse(response)
   },

@@ -12,6 +12,11 @@ const useAppStore = create()(
         authToken: null,
         activeProject: null,
         projects: [],
+        
+        // Estado de chats
+        projectChats: {}, // { projectId: [chats] }
+        activeChat: null,
+        loadingChats: false,
 
         // Estado de conversación
         conversations: [],
@@ -43,31 +48,44 @@ const useAppStore = create()(
         setUser: (user) => set({ user }),
         setAuthToken: (token) => set({ authToken: token }),
         setActiveProject: (project) => {
+          console.log('🎯 Cambiando proyecto activo:', project?.name || 'null')
+          
           set({ 
             activeProject: project,
-            // Limpiar temporalmente mientras se carga el contexto del proyecto
-            isContextBuilding: false
+            // Limpiar estados de carga
+            isContextBuilding: false,
+            isQuerying: false,
+            clarificationLoading: false,
+            error: null
           })
+          
           if (project?.id) {
             // Cargar conversaciones del proyecto
             get().loadConversations(project.id).catch(error => {
-              console.error('Error loading conversations:', error)
-              // Si no hay conversaciones, inicializamos un array vacío
-              set({ conversations: [] })
+              console.error('❌ Error loading conversations:', error)
+              set({ conversations: [], error: null })
             })
             
             // Cargar contexto activo del proyecto (si existe)
             get().loadActiveContextForProject(project.id).catch(error => {
-              console.error('Error loading active context:', error)
+              console.error('❌ Error loading active context:', error)
+            })
+            
+            // Cargar chats del proyecto
+            get().loadProjectChats(project.id).catch(error => {
+              console.error('❌ Error loading project chats:', error)
             })
           } else {
             // Si no hay proyecto activo, limpiamos todo
+            console.log('🧹 Limpiando estado por falta de proyecto activo')
             set({ 
               conversations: [],
               accumulatedContext: '',
               contextMessages: [],
               contextSessionId: null,
-              contextBuildingMode: false
+              contextBuildingMode: false,
+              activeChat: null,
+              error: null
             })
           }
         },
@@ -150,15 +168,14 @@ const useAppStore = create()(
               error: error.message || 'Error al enviar el mensaje'
             })
             
-            // No lanzar el error para evitar que se propague y cause más problemas
-            // En su lugar, agregar un mensaje de fallback
+            // Agregar mensaje de error más informativo
             set(state => ({
               contextMessages: [...state.contextMessages, {
                 user_message: message,
-                ai_response: "Lo siento, hubo un problema temporal. ¿Puedes intentar reformular tu mensaje?",
-                message_type: "question",
+                ai_response: `Error: ${error.message || 'Problema de conexión'}. Por favor, intenta de nuevo.`,
+                message_type: "error",
                 context_elements_count: 0,
-                suggestions: ["Intenta con un mensaje más específico", "Verifica tu conexión a internet"]
+                suggestions: ["Verifica tu conexión", "Intenta reformular el mensaje", "Recarga la página si persiste"]
               }]
             }))
             
@@ -240,6 +257,7 @@ const useAppStore = create()(
         // Cargar contexto activo para un proyecto
         loadActiveContextForProject: async (projectId) => {
           try {
+            console.log('🔍 Cargando contexto activo para proyecto:', projectId)
             const activeSession = await api.getActiveContextSession(projectId)
             
             // Si hay una sesión activa, cargar su contexto
@@ -250,7 +268,12 @@ const useAppStore = create()(
                 contextSessionId: activeSession.session_id,
                 contextBuildingMode: activeSession.session_status === 'active'
               })
-              console.log('✅ Contexto activo cargado para proyecto:', projectId)
+              console.log('✅ Contexto activo cargado:', {
+                sessionId: activeSession.session_id,
+                contextLength: activeSession.accumulated_context?.length || 0,
+                messagesCount: activeSession.conversation_history?.length || 0,
+                status: activeSession.session_status
+              })
             } else {
               // No hay sesión activa, limpiar contexto
               set({
@@ -263,12 +286,13 @@ const useAppStore = create()(
             }
           } catch (error) {
             // Si no hay sesión activa (404) o cualquier otro error, simplemente limpiar
-            console.log('ℹ️ No se pudo cargar contexto activo (normal si no existe):', error.message)
+            console.log('ℹ️ No se pudo cargar contexto activo:', error.message)
             set({
               accumulatedContext: '',
               contextMessages: [],
               contextSessionId: null,
-              contextBuildingMode: false
+              contextBuildingMode: false,
+              error: null // Limpiar errores previos
             })
           }
         },
@@ -365,6 +389,88 @@ const useAppStore = create()(
             clarificationLoading: false,
             preAnalystResult: null
           })
+        },
+
+        // ==========================================
+        // ACCIONES DE CHATS
+        // ==========================================
+        
+        // Cargar chats de un proyecto
+        loadProjectChats: async (projectId) => {
+          if (!projectId) return
+          
+          try {
+            set({ loadingChats: true })
+            const response = await api.getProjectChats(projectId)
+            const chats = response.chats || []
+            
+            set(state => ({
+              projectChats: {
+                ...state.projectChats,
+                [projectId]: chats
+              },
+              loadingChats: false,
+              error: null
+            }))
+            
+            return chats
+          } catch (error) {
+            console.error('Error loading project chats:', error)
+            set({ 
+              loadingChats: false,
+              error: null // No mostrar error al usuario, solo en consola
+            })
+            return []
+          }
+        },
+
+        // Crear un nuevo chat
+        createChat: async (projectId, title) => {
+          if (!projectId || !title) return
+          
+          try {
+            const newChat = await api.createChat(projectId, title)
+            
+            set(state => ({
+              projectChats: {
+                ...state.projectChats,
+                [projectId]: [newChat, ...(state.projectChats[projectId] || [])]
+              },
+              activeChat: newChat
+            }))
+            
+            return newChat
+          } catch (error) {
+            console.error('Error creating chat:', error)
+            set({ error: error.message })
+            throw error
+          }
+        },
+
+        // Eliminar un chat
+        deleteChat: async (chatId, projectId) => {
+          if (!chatId || !projectId) return
+          
+          try {
+            await api.deleteChat(chatId)
+            
+            set(state => ({
+              projectChats: {
+                ...state.projectChats,
+                [projectId]: (state.projectChats[projectId] || []).filter(chat => chat.id !== chatId)
+              },
+              activeChat: state.activeChat?.id === chatId ? null : state.activeChat
+            }))
+          } catch (error) {
+            console.error('Error deleting chat:', error)
+            set({ error: error.message })
+            throw error
+          }
+        },
+
+        // Seleccionar chat activo
+        setActiveChat: (chat) => {
+          set({ activeChat: chat })
         },
 
         // Acciones de proyectos
@@ -485,7 +591,14 @@ const useAppStore = create()(
         clearError: () => set({ error: null })
       }),
       {
-        name: 'orquix-store'
+        name: 'orquix-store',
+        partialize: (state) => ({
+          // Solo persistir estos campos, NO activeProject
+          user: state.user,
+          authToken: state.authToken,
+          projects: state.projects,
+          // NO persistir activeProject, activeChat para forzar selección manual
+        })
       }
     )
   )

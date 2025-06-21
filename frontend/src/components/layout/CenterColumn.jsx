@@ -6,6 +6,7 @@ import AIResponseCard from '../ui/AIResponseCard'
 import ClarificationDialog from '../ui/ClarificationDialog'
 import ConversationStatePanel from '../ui/ConversationStatePanel'
 
+
 const CenterColumn = ({ activeProject }) => {
   const [contextSession, setContextSession] = useState(null)
   const [conversationFlow, setConversationFlow] = useState([])
@@ -1862,7 +1863,7 @@ const CenterColumn = ({ activeProject }) => {
         </div>
       )}
 
-      {/* Estado de la Conversación */}
+            {/* Estado de la Conversación */}
       <ConversationStatePanel />
 
       {/* Input Form - Solo mostrar si hay un proyecto activo */}

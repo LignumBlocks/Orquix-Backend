@@ -17,22 +17,52 @@ class QueryRequest(BaseModel):
     conversation_mode: Optional[str] = Field(default="auto", description="Modo de conversación: 'auto', 'continue', 'new'")
 
 
+# ✅ NUEVO: Schema refactorizado para Timeline
 class InteractionEventCreate(BaseModel):
-    """Esquema para crear un nuevo evento de interacción"""
+    """Esquema para crear un nuevo evento de interacción en el timeline"""
+    session_id: UUID = Field(..., description="ID de la sesión de chat")
+    event_type: str = Field(..., description="Tipo de evento: user_message, ai_response, context_update, session_complete")
+    content: str = Field(..., min_length=1, description="Contenido del evento")
+    event_data: Optional[Dict[str, Any]] = Field(default=None, description="Datos adicionales del evento")
+    
+    # ✅ Campos de compatibilidad (DEPRECATED)
+    project_id: Optional[UUID] = Field(default=None, description="DEPRECATED: usar session.chat.project_id")
+    user_id: Optional[UUID] = Field(default=None, description="DEPRECATED: usar session.user_id")
+    user_prompt_text: Optional[str] = Field(default=None, description="DEPRECATED: usar content")
+
+
+class InteractionEventResponse(BaseModel):
+    """Respuesta de un evento de interacción del timeline"""
     id: UUID
-    project_id: UUID
-    user_id: UUID
-    user_prompt: str
-    ai_responses: List[Dict[str, Any]]  # JSON serializable
-    moderator_synthesis: Dict[str, Any]  # JSON serializable
-    context_used: bool = False
-    context_preview: Optional[str] = None
-    processing_time_ms: int
+    session_id: UUID
+    event_type: str
+    content: str
+    event_data: Optional[Dict[str, Any]] = None
     created_at: datetime
+    updated_at: datetime
+    
+    # Campos de compatibilidad
+    project_id: Optional[UUID] = None
+    user_id: Optional[UUID] = None
+    user_prompt_text: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
 
 
+class SessionTimelineResponse(BaseModel):
+    """Timeline completo de eventos de una sesión"""
+    session_id: UUID
+    events: List[InteractionEventResponse] = Field(default_factory=list)
+    total_events: int
+    session_status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+# ✅ SCHEMAS LEGACY (mantener para compatibilidad)
 class InteractionEvent(BaseModel):
-    """Evento de interacción almacenado en la base de datos"""
+    """Evento de interacción almacenado en la base de datos - LEGACY"""
     id: UUID
     project_id: UUID
     user_prompt: str

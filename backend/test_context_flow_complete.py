@@ -11,8 +11,7 @@ import os
 # Agregar el directorio padre al path para importar módulos
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.services.context_builder import context_builder_service
-from app.models.context_session import ContextMessage
+from app.services.context_builder import context_builder_service, ContextMessage
 from datetime import datetime
 
 async def test_context_flow():

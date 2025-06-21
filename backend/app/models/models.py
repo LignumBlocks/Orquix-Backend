@@ -25,6 +25,8 @@ class User(SQLModel, table=True):
     projects: List["Project"] = Relationship(back_populates="user")
     interaction_events: List["InteractionEvent"] = Relationship(back_populates="user")
     context_chunks: List["ContextChunk"] = Relationship(back_populates="user")
+    chats: List["Chat"] = Relationship(back_populates="user")
+    sessions: List["Session"] = Relationship(back_populates="user")
 
 
 class Project(SQLModel, table=True):
@@ -48,6 +50,7 @@ class Project(SQLModel, table=True):
     user: User = Relationship(back_populates="projects")
     interaction_events: List["InteractionEvent"] = Relationship(back_populates="project")
     context_chunks: List["ContextChunk"] = Relationship(back_populates="project")
+    chats: List["Chat"] = Relationship(back_populates="project")
 
 
 class ModeratedSynthesis(SQLModel, table=True):
@@ -63,41 +66,37 @@ class ModeratedSynthesis(SQLModel, table=True):
 
 
 class InteractionEvent(SQLModel, table=True):
+    """Timeline cronológico de eventos en sesiones de chat"""
     __tablename__ = "interaction_events"
     __table_args__ = {'extend_existing': True}
 
-    id: UUID = Field(
-        sa_column=Column(PostgresUUID(as_uuid=True), primary_key=True, nullable=False)
-    )
-
-    project_id: UUID = Field(foreign_key="projects.id", index=True)
-    user_id: UUID = Field(foreign_key="users.id", index=True)
-    user_prompt_text: str = Field(sa_column=Column(Text, nullable=False))
-    context_used_summary: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    moderated_synthesis_id: Optional[UUID] = Field(default=None, foreign_key="moderated_syntheses.id")
-    user_feedback_score: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
-    user_feedback_comment: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, index=True))
+    # ✅ Campos esenciales
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    session_id: UUID = Field(foreign_key="sessions.id", index=True)  # 🔗 RELACIÓN PRINCIPAL
+    
+    # ✅ Tipo de evento
+    event_type: str = Field(index=True)  # "user_message" | "ai_response" | "context_update" | "session_complete"
+    
+    # ✅ Contenido del evento
+    content: str = Field(sa_column=Column(Text, nullable=False))  # Mensaje del usuario o respuesta de IA
+    
+    # ✅ Metadatos del evento
+    event_data: Optional[dict] = Field(default=None, sa_column=Column(JSONB, nullable=True))  # Datos adicionales flexibles
+    
+    # ✅ Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False, index=True))
     updated_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
     deleted_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True, index=True))
-    ai_responses_json: Optional[str] = Field(default=None, sa_column=Column(JSONB, nullable=True))
-    moderator_synthesis_json: Optional[str] = Field(default=None, sa_column=Column(JSONB, nullable=True))
-    context_used: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, default=False))
-    context_preview: Optional[str] = Field(default=None, sa_column=Column(String(500), nullable=True))
-    processing_time_ms: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
-    
-    # NUEVO: Tipo de interacción
-    interaction_type: str = Field(default="final_query", sa_column=Column(String(50), nullable=False, default="final_query"))
-    # Valores posibles: "context_building", "final_query"
-    
-    # NUEVO: Estado de sesión para construcción de contexto
-    session_status: Optional[str] = Field(default=None, sa_column=Column(String(20), nullable=True))
-    # Valores posibles: "active", "completed", "abandoned" (solo para context_building)
 
+    # ✅ Campos de compatibilidad (mantener por ahora para migración gradual)
+    project_id: UUID = Field(foreign_key="projects.id", index=True)
+    user_id: UUID = Field(foreign_key="users.id", index=True)
+    user_prompt_text: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))  # DEPRECATED: usar content
+    
     # Relationships
     project: Project = Relationship(back_populates="interaction_events")
     user: User = Relationship(back_populates="interaction_events")
-    moderated_synthesis: Optional[ModeratedSynthesis] = Relationship()
+    session: "Session" = Relationship()  # 🔗 NUEVA RELACIÓN PRINCIPAL
 
 
 class IAPrompt(SQLModel, table=True):
@@ -110,12 +109,12 @@ class IAPrompt(SQLModel, table=True):
     deleted_at: Optional[datetime] = Field(default=None, index=True)
 
     project_id: UUID = Field(foreign_key="projects.id", index=True)
-    context_session_id: Optional[UUID] = Field(default=None, index=True)  # Para relacionar con sesiones de contexto
+    context_session_id: Optional[UUID] = Field(default=None, index=True)
     original_query: str = Field(sa_column=Column(Text, nullable=False))
     generated_prompt: str = Field(sa_column=Column(Text, nullable=False))
     is_edited: bool = Field(default=False)
     edited_prompt: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    status: str = Field(default="generated", index=True)  # generated, edited, executed
+    status: str = Field(default="generated", index=True)
     
     # Relationships
     project: Project = Relationship()
@@ -160,4 +159,55 @@ class ContextChunk(SQLModel, table=True):
 
     # Relationships
     project: Project = Relationship(back_populates="context_chunks")
-    user: User = Relationship(back_populates="context_chunks") 
+    user: User = Relationship(back_populates="context_chunks")
+
+
+class Chat(SQLModel, table=True):
+    __tablename__ = "chats"
+    __table_args__ = {'extend_existing': True}
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    deleted_at: Optional[datetime] = Field(default=None, index=True)
+
+    project_id: UUID = Field(foreign_key="projects.id", index=True)
+    user_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
+    title: str = Field(sa_column=Column(Text, nullable=False))
+    is_archived: bool = Field(default=False)
+
+    # Relationships
+    project: Project = Relationship()
+    user: Optional[User] = Relationship()
+    sessions: List["Session"] = Relationship(back_populates="chat")
+
+
+class Session(SQLModel, table=True):
+    __tablename__ = "sessions"
+    __table_args__ = {'extend_existing': True}
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    deleted_at: Optional[datetime] = Field(default=None, index=True)
+
+    chat_id: UUID = Field(foreign_key="chats.id", index=True)
+    previous_session_id: Optional[UUID] = Field(default=None, foreign_key="sessions.id", index=True)
+    user_id: Optional[UUID] = Field(default=None, foreign_key="users.id", index=True)
+    
+    accumulated_context: str = Field(default="", sa_column=Column(Text, nullable=False, default=""))
+    final_question: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    status: str = Field(default="active", sa_column=Column(String(20), nullable=False, default="active"))
+    order_index: int = Field(sa_column=Column(Integer, nullable=False))
+    
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    finished_at: Optional[datetime] = Field(default=None)
+
+    # Relationships
+    chat: Chat = Relationship(back_populates="sessions")
+    user: Optional[User] = Relationship()
+    previous_session: Optional["Session"] = Relationship(
+        sa_relationship_kwargs={"remote_side": "Session.id"}
+    )
+    interaction_events: List["InteractionEvent"] = Relationship(back_populates="session")
+

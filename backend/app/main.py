@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Importar endpoints
-from app.api.v1.endpoints import projects, auth, feedback, health, interactions, pre_analyst, context_chat
+from app.api.v1.endpoints import projects, auth, feedback, health, interactions, pre_analyst, context_chat, chats
 from app.api.v1.context import router as context_router
 
 # Configuración y middleware
@@ -191,6 +191,18 @@ app.include_router(
     tags=["📄 Contexto"],
     responses={
         401: {"description": "No autenticado"},
+    }
+)
+
+# Endpoints de Chat + Session (nueva arquitectura)
+app.include_router(
+    chats.router, 
+    prefix=f"{settings.API_V1_STR}", 
+    tags=["💬 Chats y Sesiones"],
+    responses={
+        401: {"description": "No autenticado"},
+        403: {"description": "Sin permisos"},
+        404: {"description": "Chat o sesión no encontrada"},
     }
 )
 

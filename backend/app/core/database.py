@@ -7,6 +7,12 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
 
+# Importar todos los modelos para que SQLModel.metadata los conozca
+from app.models.models import (
+    User, Project, ModeratedSynthesis, InteractionEvent, 
+    IAPrompt, IAResponse, ContextChunk, Chat, Session
+)
+
 engine = create_async_engine(
     settings.async_database_url,
     echo=False,

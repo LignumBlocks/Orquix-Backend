@@ -10,16 +10,221 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.api.v1.endpoints.auth import get_current_user
 from app.schemas.auth import SessionUser
-from app.crud import context_session as context_crud
+from app.crud import session as session_crud
+from app.crud import chat as chat_crud
 from app.crud import ia_prompt as ia_prompt_crud
-from app.models.context_session import (
-    ContextChatRequest,
-    ContextChatResponse,
-    ContextFinalizeRequest,
-    ContextMessage,
-    ContextSession,
-    ContextSessionSummary
-)
+from app.crud import interaction as interaction_crud
+# Schemas temporales para compatibilidad (migrar gradualmente a Chat + Session)
+from pydantic import BaseModel
+from typing import List, Optional
+from uuid import UUID
+from datetime import datetime
+import json
+
+# Funciones de compatibilidad para migrar gradualmente del sistema antiguo al nuevo
+async def _get_or_create_default_chat(db: AsyncSession, project_id: UUID, user_id: UUID) -> UUID:
+    """Obtiene o crea un chat por defecto para el proyecto."""
+    # Obtener chats del proyecto
+    chats = await chat_crud.get_chats_by_project(db, project_id)
+    
+    # Filtrar por usuario (la función get_chats_by_project no filtra por user_id)
+    user_chats = [chat for chat in chats if chat.user_id == user_id]
+    
+    if user_chats:
+        return user_chats[0].id
+    else:
+        # Crear chat por defecto
+        chat = await chat_crud.create_chat(
+            db=db,
+            project_id=project_id,
+            user_id=user_id,
+            title="Construcción de Contexto"
+        )
+        return chat.id
+
+async def _get_context_session_compat(db: AsyncSession, session_id: UUID):
+    """Función de compatibilidad para obtener sesión."""
+    # En el sistema nuevo, buscamos en la tabla sessions
+    session = await session_crud.get_session(db, session_id)
+    if session:
+        # Convertir a formato compatible con el sistema antiguo
+        return type('MockInteractionEvent', (), {
+            'id': session.id,
+            'project_id': session.chat.project_id if hasattr(session, 'chat') else None,
+            'user_id': session.user_id,
+            'context_used_summary': session.accumulated_context,
+            'ai_responses_json': '[]',  # Historial vacío por ahora
+            'session_status': session.status,
+            'created_at': session.started_at,
+            'updated_at': session.updated_at
+        })()
+    return None
+
+async def _create_context_session_compat(db: AsyncSession, project_id: UUID, user_id: UUID, initial_message: str = None):
+    """Función de compatibilidad para crear sesión."""
+    # Obtener o crear chat por defecto
+    chat_id = await _get_or_create_default_chat(db, project_id, user_id)
+    
+    # Crear sesión en el sistema nuevo
+    session = await session_crud.create_session(
+        db=db,
+        chat_id=chat_id,
+        user_id=user_id,
+        accumulated_context="",
+        status="active"
+    )
+    
+    # Convertir a formato compatible
+    return type('MockInteractionEvent', (), {
+        'id': session.id,
+        'project_id': project_id,
+        'user_id': session.user_id,
+        'context_used_summary': session.accumulated_context,
+        'ai_responses_json': '[]',
+        'session_status': session.status,
+        'created_at': session.started_at,
+        'updated_at': session.updated_at
+    })()
+
+def _convert_session_to_context_session(session_data):
+    """Convierte una sesión al formato ContextSession."""
+    return ContextSession(
+        id=session_data.id,
+        project_id=session_data.project_id,
+        user_id=session_data.user_id,
+        conversation_history=[],  # Por ahora vacío
+        accumulated_context=session_data.context_used_summary or "",
+        is_active=(session_data.session_status == "active"),
+        created_at=session_data.created_at,
+        updated_at=session_data.updated_at
+    )
+
+class ContextMessage(BaseModel):
+    role: str
+    content: str
+    timestamp: datetime
+    message_type: Optional[str] = None
+
+class ContextChatRequest(BaseModel):
+    user_message: str
+    session_id: Optional[UUID] = None
+
+class ContextChatResponse(BaseModel):
+    session_id: UUID
+    ai_response: str
+    message_type: str
+    accumulated_context: str
+    suggestions: List[str] = []
+    context_elements_count: int = 0
+    suggested_final_question: Optional[str] = None
+
+class ContextFinalizeRequest(BaseModel):
+    session_id: UUID
+    final_question: str
+
+class ContextSessionSummary(BaseModel):
+    id: UUID
+    project_id: UUID
+    accumulated_context: str
+    messages_count: int
+    is_active: bool
+    created_at: datetime
+    last_activity: datetime
+
+class ContextSession(BaseModel):
+    id: UUID
+    project_id: UUID
+    user_id: UUID
+    conversation_history: List[ContextMessage]
+    accumulated_context: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+# Funciones de compatibilidad adicionales (después de las definiciones de clases)
+async def _update_context_session_compat(db: AsyncSession, session_data, new_message: ContextMessage, updated_context: str):
+    """Función de compatibilidad para actualizar sesión de contexto."""
+    # Actualizar contexto acumulado en la sesión
+    await session_crud.update_session_context(db, session_data.id, updated_context)
+    
+    # ✅ NUEVO: Crear evento de timeline para el mensaje del usuario
+    if new_message.role == "user":
+        await interaction_crud.create_timeline_event(
+            db=db,
+            session_id=session_data.id,
+            event_type="user_message",
+            content=new_message.content,
+            event_data={
+                "message_type": new_message.message_type,
+                "timestamp": new_message.timestamp.isoformat()
+            },
+            project_id=session_data.project_id,  # Compatibilidad
+            user_id=session_data.user_id  # Compatibilidad
+        )
+    
+    # Hacer commit para guardar el evento
+    await db.commit()
+    
+    return session_data
+
+async def _get_project_context_sessions_compat(db: AsyncSession, project_id: UUID, user_id: UUID) -> List[ContextSessionSummary]:
+    """Función de compatibilidad para obtener sesiones de proyecto."""
+    # Obtener chats del proyecto
+    chats = await chat_crud.get_chats_by_project(db, project_id)
+    
+    # Filtrar por usuario
+    user_chats = [chat for chat in chats if chat.user_id == user_id]
+    summaries = []
+    
+    for chat in user_chats:
+        # Obtener sesiones del chat
+        sessions = await session_crud.get_sessions_by_chat(db, chat.id)
+        for session in sessions:
+            summaries.append(ContextSessionSummary(
+                id=session.id,
+                project_id=project_id,
+                accumulated_context=session.accumulated_context,
+                messages_count=0,  # Por ahora 0
+                is_active=(session.status == "active"),
+                created_at=session.started_at,
+                last_activity=session.updated_at
+            ))
+    
+    return summaries
+
+async def _finalize_context_session_compat(db: AsyncSession, session_id: UUID):
+    """Función de compatibilidad para finalizar sesión."""
+    return await session_crud.update_session_status(db, session_id, "completed")
+
+async def _get_active_session_for_project_compat(db: AsyncSession, project_id: UUID, user_id: UUID):
+    """Función de compatibilidad para obtener sesión activa."""
+    # Obtener chats del proyecto
+    chats = await chat_crud.get_chats_by_project(db, project_id)
+    
+    # Filtrar por usuario
+    user_chats = [chat for chat in chats if chat.user_id == user_id]
+    
+    for chat in user_chats:
+        # Buscar sesión activa en el chat
+        active_session = await session_crud.get_active_session(db, chat.id)
+        if active_session:
+            # Convertir a formato compatible
+            return type('MockInteractionEvent', (), {
+                'id': active_session.id,
+                'project_id': project_id,
+                'user_id': active_session.user_id,
+                'context_used_summary': active_session.accumulated_context,
+                'ai_responses_json': '[]',
+                'session_status': active_session.status,
+                'created_at': active_session.started_at,
+                'updated_at': active_session.updated_at
+            })()
+    
+    return None
+
 from app.schemas.ia_prompt import (
     GeneratePromptRequest,
     GeneratePromptResponse,
@@ -146,7 +351,7 @@ async def context_chat(
                 session_uuid = UUID(session_uuid)
             
             logger.info(f"🔍 Buscando sesión existente: {session_uuid} (tipo: {type(session_uuid)})")
-            db_session = await context_crud.get_context_session(db, session_uuid)
+            db_session = await _get_context_session_compat(db, session_uuid)
             logger.info(f"📋 Sesión encontrada: {db_session is not None}")
             
             # Validar que la sesión pertenece al proyecto y usuario correctos
@@ -158,33 +363,24 @@ async def context_chat(
                 # Si la sesión no pertenece al proyecto/usuario actual, crear una nueva
                 if db_session.project_id != project_id or db_session.user_id != user_id:
                     logger.warning(f"⚠️ Sesión {session_uuid} pertenece a otro proyecto/usuario. Creando nueva sesión.")
-                    db_session = await context_crud.create_context_session(
-                        db=db,
-                        project_id=project_id,
-                        user_id=user_id,
-                        initial_message=request.user_message
+                    db_session = await _create_context_session_compat(
+                        db, project_id, user_id, request.user_message
                     )
             else:
                 # Sesión no encontrada, crear nueva
                 logger.info(f"🆕 Sesión {session_uuid} no encontrada. Creando nueva sesión.")
-                db_session = await context_crud.create_context_session(
-                    db=db,
-                    project_id=project_id,
-                    user_id=user_id,
-                    initial_message=request.user_message
+                db_session = await _create_context_session_compat(
+                    db, project_id, user_id, request.user_message
                 )
         else:
             # Crear nueva sesión
             logger.info(f"🆕 Creando nueva sesión para proyecto {project_id}")
-            db_session = await context_crud.create_context_session(
-                db=db,
-                project_id=project_id,
-                user_id=user_id,
-                initial_message=request.user_message
+            db_session = await _create_context_session_compat(
+                db, project_id, user_id, request.user_message
             )
         
         # Convertir a modelo Pydantic para trabajar con el servicio
-        session = context_crud.convert_interaction_to_context_session(db_session)
+        session = _convert_session_to_context_session(db_session)
         
         # Buscar síntesis del moderador reciente y agregar automáticamente al contexto
         enhanced_context = await _automatically_include_moderator_synthesis(
@@ -220,17 +416,17 @@ async def context_chat(
         )
         
         # Actualizar sesión con mensaje del usuario
-        await context_crud.update_context_session(
+        await _update_context_session_compat(
             db=db,
-            session=db_session,
+            session_data=db_session,
             new_message=user_message,
             updated_context=response.accumulated_context
         )
         
         # Actualizar sesión con respuesta de la IA
-        await context_crud.update_context_session(
+        await _update_context_session_compat(
             db=db,
-            session=db_session,
+            session_data=db_session,
             new_message=ai_message,
             updated_context=response.accumulated_context
         )
@@ -262,7 +458,7 @@ async def get_context_sessions(
     """
     try:
         user_id = UUID(current_user.id)  # Convertir string a UUID
-        sessions = await context_crud.get_project_context_sessions(
+        sessions = await _get_project_context_sessions_compat(
             db=db,
             project_id=project_id,
             user_id=user_id
@@ -293,7 +489,7 @@ async def get_context_session(
     """
     try:
         user_id = UUID(current_user.id)  # Convertir string a UUID
-        db_session = await context_crud.get_context_session(db, session_id)
+        db_session = await _get_context_session_compat(db, session_id)
         if not db_session or db_session.user_id != user_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -301,7 +497,7 @@ async def get_context_session(
             )
         
         # Convertir a modelo Pydantic para acceder a los campos correctamente
-        session_model = context_crud.convert_interaction_to_context_session(db_session)
+        session_model = _convert_session_to_context_session(db_session)
         return session_model
         
     except HTTPException:
@@ -338,7 +534,7 @@ async def finalize_context_session(
         logger.info(f"🏁 Finalizando sesión de contexto: {session_id}")
         
         # Obtener y validar sesión
-        db_session = await context_crud.get_context_session(db, session_id)
+        db_session = await _get_context_session_compat(db, session_id)
         if not db_session or db_session.user_id != user_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -352,7 +548,7 @@ async def finalize_context_session(
             )
         
         # Finalizar sesión
-        await context_crud.finalize_context_session(db, session_id)
+        await _finalize_context_session_compat(db, session_id)
         
         # TODO: Aquí se integraría con el flujo normal de IAs principales
         # Por ahora retornamos información de la finalización
@@ -391,7 +587,7 @@ async def get_active_context_session(
     """
     try:
         user_id = UUID(current_user.id)  # Convertir string a UUID
-        db_session = await context_crud.get_active_session_for_project(
+        db_session = await _get_active_session_for_project_compat(
             db=db,
             project_id=project_id,
             user_id=user_id
@@ -403,7 +599,7 @@ async def get_active_context_session(
                 detail="No hay sesión de contexto activa"
             )
         
-        session = context_crud.convert_interaction_to_context_session(db_session)
+        session = _convert_session_to_context_session(db_session)
         return session
         
     except HTTPException:
@@ -431,7 +627,7 @@ async def generate_ai_prompts(
     
     try:
         # Verificar que la sesión existe y pertenece al usuario
-        session = await context_crud.get_context_session(db, session_id)
+        session = await _get_context_session_compat(db, session_id)
         if not session:
             raise HTTPException(
                 status_code=404,
@@ -446,7 +642,7 @@ async def generate_ai_prompts(
             )
         
         # Convertir a modelo Pydantic para acceder a los campos correctamente
-        session_model = context_crud.convert_interaction_to_context_session(session)
+        session_model = _convert_session_to_context_session(session)
         
         # Importar los servicios correctos
         from app.services.query_service import QueryService
@@ -566,7 +762,7 @@ async def query_ais_individually(
     
     try:
         # Verificar que la sesión existe y pertenece al usuario
-        session = await context_crud.get_context_session(db, session_id)
+        session = await _get_context_session_compat(db, session_id)
         if not session:
             raise HTTPException(
                 status_code=404,
@@ -581,7 +777,7 @@ async def query_ais_individually(
             )
         
         # Convertir a modelo Pydantic
-        session_model = context_crud.convert_interaction_to_context_session(session)
+        session_model = _convert_session_to_context_session(session)
         
         # Importar servicios necesarios
         from app.services.ai_orchestrator import AIOrchestrator
@@ -822,7 +1018,7 @@ async def retry_single_ai(
     
     try:
         # Verificar que la sesión existe y pertenece al usuario
-        session = await context_crud.get_context_session(db, session_id)
+        session = await _get_context_session_compat(db, session_id)
         if not session:
             raise HTTPException(
                 status_code=404,
@@ -837,7 +1033,7 @@ async def retry_single_ai(
             )
 
         # Obtener el modelo de sesión para el contexto
-        session_model = await context_crud.get_context_session_model(db, session_id)
+        session_model = _convert_session_to_context_session(session)
         if not session_model:
             raise HTTPException(
                 status_code=404,
@@ -951,7 +1147,7 @@ async def generate_moderator_prompt(
         logger.info(f"📝 Generando prompt del moderador - Sesión: {session_id}")
         
         # Verificar sesión
-        db_session = await context_crud.get_context_session(db, session_id)
+        db_session = await _get_context_session_compat(db, session_id)
         if not db_session:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1071,7 +1267,7 @@ async def synthesize_ai_responses(
         logger.info(f"🔬 Ejecutando síntesis del moderador - Sesión: {session_id}")
         
         # Verificar sesión
-        db_session = await context_crud.get_context_session(db, session_id)
+        db_session = await _get_context_session_compat(db, session_id)
         if not db_session:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1220,9 +1416,9 @@ async def generate_prompt_for_project(
         # Obtener contexto si hay session_id
         context_data = ""
         if request.context_session_id:
-            db_session = await context_crud.get_context_session(db, request.context_session_id)
+            db_session = await _get_context_session_compat(db, request.context_session_id)
             if db_session:
-                session_model = context_crud.convert_interaction_to_context_session(db_session)
+                session_model = _convert_session_to_context_session(db_session)
                 context_data = session_model.accumulated_context
                 logger.info(f"📋 Usando contexto de sesión {request.context_session_id} - {len(context_data)} chars")
         
@@ -1250,6 +1446,32 @@ async def generate_prompt_for_project(
         )
         
         logger.info(f"✅ Prompt generado y guardado - ID: {ia_prompt.id}, Longitud: {len(generated_prompt)} chars")
+        
+        # ✅ NUEVO: Crear evento de timeline para la generación del prompt
+        if request.context_session_id:
+            try:
+                await interaction_crud.create_timeline_event(
+                    db=db,
+                    session_id=request.context_session_id,
+                    event_type="prompt_generated",
+                    content=f"Prompt generado para consulta: {request.query}",
+                    event_data={
+                        "prompt_id": str(ia_prompt.id),
+                        "query": request.query,
+                        "prompt_length": len(generated_prompt),
+                        "context_used": len(context_data) > 0,
+                        "context_length": len(context_data),
+                        "generated_at": datetime.utcnow().isoformat()
+                    },
+                    project_id=project_id,  # Compatibilidad
+                    user_id=UUID(current_user.id)  # Compatibilidad
+                )
+                await db.commit()
+                logger.info(f"📝 Evento de timeline creado para generación de prompt - Sesión: {request.context_session_id}")
+            except Exception as timeline_error:
+                logger.warning(f"⚠️ Error creando evento de timeline: {timeline_error}")
+                # No fallar la operación principal por esto
+                pass
         
         return GeneratePromptResponse(
             prompt_id=ia_prompt.id,
@@ -1324,6 +1546,31 @@ async def update_prompt(
             )
         
         logger.info(f"✅ Prompt {prompt_id} actualizado - Nuevo status: {updated_prompt.status}")
+        
+        # ✅ NUEVO: Crear evento de timeline para la edición del prompt
+        if updated_prompt.context_session_id:
+            try:
+                await interaction_crud.create_timeline_event(
+                    db=db,
+                    session_id=updated_prompt.context_session_id,
+                    event_type="prompt_edited",
+                    content=f"Prompt editado por el usuario",
+                    event_data={
+                        "prompt_id": str(updated_prompt.id),
+                        "original_length": len(updated_prompt.generated_prompt),
+                        "edited_length": len(request.edited_prompt),
+                        "length_change": len(request.edited_prompt) - len(updated_prompt.generated_prompt),
+                        "edited_at": datetime.utcnow().isoformat()
+                    },
+                    project_id=updated_prompt.project_id,  # Compatibilidad
+                    user_id=UUID(current_user.id)  # Compatibilidad
+                )
+                await db.commit()
+                logger.info(f"📝 Evento de timeline creado para edición de prompt - Sesión: {updated_prompt.context_session_id}")
+            except Exception as timeline_error:
+                logger.warning(f"⚠️ Error creando evento de timeline para edición: {timeline_error}")
+                # No fallar la operación principal por esto
+                pass
         
         return IAPromptResponse.from_orm(updated_prompt)
         
@@ -1439,6 +1686,39 @@ async def execute_prompt(
                 }
         
         successful_count = len([r for r in responses.values() if r.get("success", False)])
+        
+        # ✅ NUEVO: Crear evento de timeline para la ejecución del prompt
+        if ia_prompt.context_session_id:
+            try:
+                await interaction_crud.create_timeline_event(
+                    db=db,
+                    session_id=ia_prompt.context_session_id,
+                    event_type="prompt_executed",
+                    content=f"Prompt ejecutado - {successful_count}/{len(providers)} IAs respondieron exitosamente",
+                    event_data={
+                        "prompt_id": str(ia_prompt.id),
+                        "used_edited_version": request.use_edited_version and ia_prompt.edited_prompt is not None,
+                        "providers_consulted": [p.value for p in providers],
+                        "successful_responses": successful_count,
+                        "total_providers": len(providers),
+                        "responses_summary": {
+                            provider: {
+                                "success": resp.get("success", False),
+                                "latency_ms": resp.get("latency_ms", 0),
+                                "status": resp.get("status", "unknown")
+                            }
+                            for provider, resp in responses.items()
+                        },
+                        "executed_at": datetime.utcnow().isoformat()
+                    },
+                    project_id=ia_prompt.project_id,  # Compatibilidad
+                    user_id=UUID(current_user.id)  # Compatibilidad
+                )
+                logger.info(f"📝 Evento de timeline creado para ejecución de prompt - Sesión: {ia_prompt.context_session_id}")
+            except Exception as timeline_error:
+                logger.warning(f"⚠️ Error creando evento de timeline para ejecución: {timeline_error}")
+                # No fallar la operación principal por esto
+                pass
         
         # Commit de todas las respuestas guardadas
         await db.commit()
