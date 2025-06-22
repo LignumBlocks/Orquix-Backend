@@ -3,8 +3,11 @@ from uuid import UUID
 from datetime import datetime
 from sqlmodel import select, func
 from sqlmodel.ext.asyncio.session import AsyncSession
+import logging
 
 from app.models.models import Session
+
+logger = logging.getLogger(__name__)
 
 
 async def create_session(
@@ -159,7 +162,8 @@ async def finalize_session_with_synthesis(
     db: AsyncSession,
     session_id: UUID,
     moderator_synthesis: str,
-    original_query: str
+    original_query: str,
+    create_next_session: bool = True
 ) -> Optional[Session]:
     """Finalizar una sesión agregando la síntesis del moderador al contexto acumulado."""
     session = await get_session(db, session_id)
@@ -179,6 +183,29 @@ async def finalize_session_with_synthesis(
     
     await db.commit()
     await db.refresh(session)
+    
+    # Crear automáticamente una nueva sesión activa que herede el contexto
+    if create_next_session:
+        try:
+            new_session = await create_session(
+                db=db,
+                chat_id=session.chat_id,
+                user_id=session.user_id,
+                accumulated_context=updated_context,  # Heredar el contexto con síntesis
+                status="active"
+            )
+            
+            # Establecer la relación con la sesión anterior
+            new_session.previous_session_id = session.id
+            await db.commit()
+            await db.refresh(new_session)
+            
+            logger.info(f"✅ Nueva sesión activa creada: {new_session.id} (hereda contexto de {session.id})")
+            
+        except Exception as e:
+            logger.error(f"❌ Error creando nueva sesión activa: {e}")
+            # No fallar si no se puede crear la nueva sesión
+    
     return session
 
 
@@ -248,4 +275,41 @@ async def get_sessions_by_status(
     ).order_by(Session.order_index.asc())
     
     result = await db.exec(statement)
-    return result.all() 
+    return result.all()
+
+
+async def get_or_create_active_session(
+    db: AsyncSession,
+    chat_id: UUID,
+    user_id: UUID
+) -> Session:
+    """Obtener la sesión activa de un chat o crear una nueva si no existe."""
+    # Primero intentar obtener una sesión activa existente
+    active_session = await get_active_session(db, chat_id)
+    
+    if active_session:
+        logger.info(f"📋 Sesión activa encontrada: {active_session.id}")
+        return active_session
+    
+    # No hay sesión activa, crear una nueva
+    logger.info(f"🆕 No hay sesión activa, creando nueva para chat {chat_id}")
+    
+    # Obtener la última sesión para heredar contexto
+    last_session = await get_last_session(db, chat_id)
+    inherited_context = ""
+    
+    if last_session and last_session.accumulated_context:
+        inherited_context = last_session.accumulated_context
+        logger.info(f"🔄 Heredando contexto de sesión anterior: {len(inherited_context)} caracteres")
+    
+    # Crear nueva sesión activa
+    new_session = await create_session(
+        db=db,
+        chat_id=chat_id,
+        user_id=user_id,
+        accumulated_context=inherited_context,
+        status="active"
+    )
+    
+    logger.info(f"✅ Nueva sesión activa creada: {new_session.id}")
+    return new_session 

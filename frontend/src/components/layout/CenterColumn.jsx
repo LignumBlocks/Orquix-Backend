@@ -28,7 +28,7 @@ const CenterColumn = ({ activeProject }) => {
   // ==========================================
   // NUEVO: Estados para el botón "Orquestar"
   // ==========================================
-  const [orchestrateState, setOrchestrateState] = useState('generate_prompts') // 'generate_prompts' | 'generate_analisis' | 'ready_for_synthesis'
+  // Estado de orquestación eliminado - ahora todo se hace en un solo paso
   const [currentPromptId, setCurrentPromptId] = useState(null)
   const [generatedPrompt, setGeneratedPrompt] = useState(null)
   const [synthesisSessionId, setSynthesisSessionId] = useState(null)
@@ -68,7 +68,6 @@ const CenterColumn = ({ activeProject }) => {
     setConversationFlow([])
     setContextSession(null)
     // Resetear estados de orquestación
-    setOrchestrateState('generate_prompts')
     setCurrentPromptId(null)
     setGeneratedPrompt(null)
     setSynthesisSessionId(null)
@@ -510,78 +509,15 @@ const CenterColumn = ({ activeProject }) => {
     }
   }
 
-  const handleSynthesizeResponses = async () => {
-    const sessionIdToUse = synthesisSessionId || contextSessionId
-    if (!sessionIdToUse) {
-      setError('No hay sesión de contexto activa')
-      return
-    }
-
-    setIsOrchestrating(true)
-    setError(null)
-
-    try {
-      const lastInteraction = conversationFlow[conversationFlow.length - 1]
-      const userQuestion = lastInteraction?.user_question || "¿Qué recomendaciones me puedes dar?"
-
-      console.log('🔬 Ejecutando síntesis del moderador para sesión:', sessionIdToUse)
-
-      const response = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${sessionIdToUse}/synthesize`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          session_id: sessionIdToUse,
-          final_question: userQuestion
-        })
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || `Error del servidor: ${response.status}`)
-      }
-
-      const synthesisResult = await response.json()
-      console.log('✅ Síntesis completada:', synthesisResult)
-
-      setSynthesisData(synthesisResult)
-
-      // Agregar la síntesis al flujo conversacional
-      const synthesisInteraction = {
-        type: 'synthesis_completed',
-        synthesis_data: synthesisResult,
-        timestamp: new Date().toISOString()
-      }
-
-      setConversationFlow(prev => [...prev, synthesisInteraction])
-
-      // Después de la síntesis del moderador, volver al estado inicial
-      setOrchestrateState('generate_prompts')
-      setCurrentPromptId(null)
-      setGeneratedPrompt(null)
-      setSynthesisSessionId(null)
-
-    } catch (error) {
-      console.error('Error ejecutando síntesis:', error)
-      setError(`Error ejecutando síntesis: ${error.message}`)
-    } finally {
-      setIsOrchestrating(false)
-    }
-  }
+  // Función handleSynthesizeResponses eliminada - ahora todo se hace automáticamente en el endpoint /execute
 
   // ==========================================
   // NUEVAS FUNCIONES PARA EL FLUJO "ORQUESTAR"
   // ==========================================
 
   const handleOrchestrate = async () => {
-    if (orchestrateState === 'generate_prompts') {
-      // Generar prompts para las IAs
-      await handleGeneratePromptForOrchestration()
-    } else if (orchestrateState === 'ready_for_synthesis') {
-      // Hacer síntesis con el moderador
-      await handleSynthesizeResponses()
-    }
+    // Ejecutar todo el flujo completo: generar prompt, consultar IAs y sintetizar automáticamente
+    await handleGeneratePromptForOrchestration()
   }
 
   const handleGeneratePromptForOrchestration = async () => {
@@ -741,8 +677,7 @@ const CenterColumn = ({ activeProject }) => {
         }
       }
 
-      // Cambiar estado para habilitar el botón de síntesis
-      setOrchestrateState('ready_for_synthesis')
+      // Estado de orquestación ya no es necesario - todo se hace automáticamente
 
     } catch (error) {
       console.error('❌ Error ejecutando prompt:', error)
@@ -1990,8 +1925,8 @@ const CenterColumn = ({ activeProject }) => {
               />
             </div>
             
-            {/* Botón "Orquestar" - Visible para generar prompts o hacer síntesis */}
-            {((message.trim() && orchestrateState === 'generate_prompts') || orchestrateState === 'ready_for_synthesis') && (
+            {/* Botón "Orquestar" - Ejecuta todo el flujo automáticamente */}
+            {message.trim() && (
               <button
                 type="button"
                 onClick={handleOrchestrate}
@@ -1999,19 +1934,12 @@ const CenterColumn = ({ activeProject }) => {
                 className={`px-3 py-2 rounded-lg flex items-center justify-center min-w-[100px] h-[44px] ${
                   isOrchestrating || isQuerying || clarificationLoading || isContextBuilding || isProcessing || isSendingToAIs || isQueryingAIs
                     ? 'bg-gray-300 cursor-not-allowed'
-                    : orchestrateState === 'ready_for_synthesis'
-                      ? 'bg-gradient-to-r from-green-500 to-teal-500 hover:from-green-600 hover:to-teal-600'
-                      : 'bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600'
+                    : 'bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600'
                 } text-white transition-colors text-sm font-medium`}
-                title={orchestrateState === 'ready_for_synthesis' ? 'Hacer síntesis con el moderador' : 'Generar prompt para las IAs'}
+                title="Generar prompt, consultar IAs y sintetizar automáticamente"
               >
                 {isOrchestrating ? (
                   <LoaderIcon className="w-4 h-4 animate-spin mr-1" />
-                ) : orchestrateState === 'ready_for_synthesis' ? (
-                  <>
-                    <span className="mr-1">🔬</span>
-                    <span>Sintetizar</span>
-                  </>
                 ) : (
                   <>
                     <span className="mr-1">🎯</span>

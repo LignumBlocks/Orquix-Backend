@@ -205,7 +205,7 @@ async def _get_active_session_for_project_compat(db: AsyncSession, project_id: U
         # Obtener chats del proyecto
         chats = await chat_crud.get_chats_by_project(db, project_id)
         
-        # Buscar en todos los chats del proyecto (no filtrar por usuario ya que los chats pueden ser compartidos)
+        # Buscar en todos los chats del proyecto
         for chat in chats:
             # Buscar sesión activa en el chat
             active_session = await session_crud.get_active_session(db, chat.id)
@@ -222,10 +222,34 @@ async def _get_active_session_for_project_compat(db: AsyncSession, project_id: U
                     'updated_at': active_session.updated_at
                 })()
         
+        # Si no hay sesión activa, crear una en el primer chat disponible
+        if chats:
+            first_chat = chats[0]
+            logger.info(f"🆕 No hay sesión activa, creando nueva en chat {first_chat.id}")
+            
+            # Usar la nueva función para obtener o crear sesión activa
+            active_session = await session_crud.get_or_create_active_session(
+                db=db,
+                chat_id=first_chat.id,
+                user_id=user_id
+            )
+            
+            # Convertir a formato compatible
+            return type('MockInteractionEvent', (), {
+                'id': active_session.id,
+                'project_id': project_id,
+                'user_id': active_session.user_id,
+                'context_used_summary': active_session.accumulated_context,
+                'ai_responses_json': '[]',
+                'session_status': active_session.status,
+                'created_at': active_session.started_at,
+                'updated_at': active_session.updated_at
+            })()
+        
         return None
         
     except Exception as e:
-        logger.error(f"Error buscando sesión activa para proyecto {project_id}: {e}")
+        logger.error(f"Error buscando/creando sesión activa para proyecto {project_id}: {e}")
         return None
 
 from app.schemas.ia_prompt import (
