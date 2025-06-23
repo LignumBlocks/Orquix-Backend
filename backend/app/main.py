@@ -92,18 +92,15 @@ if settings.ENVIRONMENT == "development":
         "http://localhost:8000",
     ])
 
-# En producción, ser más permisivo con Render
+# Configuración CORS más permisiva para Render
 logger.info(f"🌍 CORS Configuration - Environment: {settings.ENVIRONMENT}")
-logger.info(f"🌍 CORS Configuration - Allowed origins: {allowed_origins}")
+logger.info(f"🌍 CORS Configuration - Initial allowed origins: {allowed_origins}")
 
-if settings.ENVIRONMENT == "production":
-    # Permitir todos los orígenes temporalmente para debug de CORS
-    allowed_origins = ["*"]
-    allow_credentials = False  # No se puede usar credentials con "*"
-    logger.info("🌍 CORS: Permitiendo todos los orígenes en producción (temporal)")
-else:
-    allow_credentials = True
-    logger.info(f"🌍 CORS: Orígenes específicos en desarrollo: {allowed_origins}")
+# Permitir todos los orígenes temporalmente para resolver CORS en Render
+# TODO: Restringir después de confirmar que funciona
+allowed_origins = ["*"]
+allow_credentials = False  # No se puede usar credentials con "*"
+logger.info("🌍 CORS: Permitiendo TODOS los orígenes (temporal para debug)")
 
 app.add_middleware(
     CORSMiddleware,
