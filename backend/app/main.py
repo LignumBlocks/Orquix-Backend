@@ -96,34 +96,15 @@ if settings.ENVIRONMENT == "development":
 logger.info(f"🌍 CORS Configuration - Environment: {settings.ENVIRONMENT}")
 logger.info(f"🌍 CORS Configuration - Initial allowed origins: {allowed_origins}")
 
-# Permitir todos los orígenes temporalmente para resolver CORS en Render
-# TODO: Restringir después de confirmar que funciona
-allowed_origins = ["*"]
-allow_credentials = False  # No se puede usar credentials con "*"
-logger.info("🌍 CORS: Permitiendo TODOS los orígenes (temporal para debug)")
 
 # ========================================
 # MIDDLEWARE CORS PERSONALIZADO
 # ========================================
-# Agregar middleware personalizado ANTES del CORSMiddleware para asegurar headers en todas las respuestas
-
-@app.middleware("http")
-async def add_cors_headers(request, call_next):
-    """Middleware personalizado para asegurar headers CORS en todas las respuestas"""
-    response = await call_next(request)
-    
-    # Agregar headers CORS a todas las respuestas
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, HEAD"
-    response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Authorization, Content-Language, Content-Type, X-API-Key, X-CSRF-Token, X-Requested-With"
-    response.headers["Access-Control-Max-Age"] = "86400"
-    
-    return response
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=allow_credentials,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
     allow_headers=[
         "Accept",
