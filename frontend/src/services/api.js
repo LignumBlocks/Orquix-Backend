@@ -26,7 +26,7 @@ const getAuthHeaders = () => {
 const api = {
   // Proyectos
   getProjects: async () => {
-    const response = await fetch(`${config.apiUrl}/api/v1/projects`, {
+    const response = await fetch(`${config.apiUrl}/api/v1/projects/`, {
       method: 'GET',
       headers: getAuthHeaders()
     })
@@ -34,7 +34,7 @@ const api = {
   },
 
   createProject: async (projectData) => {
-    const response = await fetch(`${config.apiUrl}/api/v1/projects`, {
+    const response = await fetch(`${config.apiUrl}/api/v1/projects/`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(projectData)
