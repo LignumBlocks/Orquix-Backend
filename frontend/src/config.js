@@ -3,8 +3,8 @@ const isDev = import.meta.env.DEV
 
 const config = {
   // API Base URL dinámico para desarrollo y producción
-  apiUrl: import.meta.env.VITE_API_URL || 'http://localhost:8000',
-  API_BASE_URL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+  apiUrl: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
+  API_BASE_URL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
     
   APP_NAME: import.meta.env.VITE_APP_NAME || 'Orquix',
   VERSION: import.meta.env.VITE_APP_VERSION || '1.0.0',

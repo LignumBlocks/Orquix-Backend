@@ -97,8 +97,10 @@ services:
     staticPublishPath: ./dist
     pullRequestPreviewsEnabled: true
     envVars:
-      # Frontend Configuration
+      # Frontend Configuration - API URL del backend en Render
       - key: VITE_API_BASE_URL
+        value: https://orquix-backend.onrender.com
+      - key: VITE_API_URL
         value: https://orquix-backend.onrender.com
       - key: VITE_APP_NAME
         value: Orquix
