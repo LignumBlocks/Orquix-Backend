@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { devtools, persist } from 'zustand/middleware'
 import api from '../services/api'
 import { clarificationService } from '../services/clarificationService'
+import config from '../config'
 
 const useAppStore = create()(
   devtools(
@@ -193,7 +194,7 @@ const useAppStore = create()(
           if (!sessionId) return null
 
           try {
-            const response = await fetch(`http://localhost:8000/api/v1/context-chat/sessions/${sessionId}/status`, {
+            const response = await fetch(`${config.apiUrl}/api/v1/context-chat/sessions/${sessionId}/status`, {
               method: 'GET',
               headers: {
                 'Content-Type': 'application/json',
