@@ -147,6 +147,9 @@ const useAppStore = create()(
               contextSessionId
             )
 
+            // Detectar si es una nueva sesión (cambió contextSessionId)
+            const isNewSession = !contextSessionId && response.session_id
+            
             // Actualizar estado con la respuesta
             set(state => ({
               contextSessionId: response.session_id,
@@ -161,6 +164,17 @@ const useAppStore = create()(
               isContextBuilding: false,
               error: null
             }))
+
+            // ✅ NUEVO: Si es una nueva sesión, actualizar la lista de sesiones del sidebar
+            if (isNewSession && activeProject?.id) {
+              console.log('🔄 Nueva sesión creada, actualizando lista de sesiones...')
+              // Ejecutar en el próximo tick para permitir que el estado se actualice
+              setTimeout(() => {
+                get().loadProjectSessionsSummary(activeProject.id).catch(error => {
+                  console.error('❌ Error actualizando lista de sesiones:', error)
+                })
+              }, 100)
+            }
 
             return response
           } catch (error) {

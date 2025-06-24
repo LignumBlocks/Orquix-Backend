@@ -318,7 +318,7 @@ const LeftSidebar = ({
               value={newChatTitle}
               onChange={(e) => setNewChatTitle(e.target.value)}
               placeholder="Nombre del chat..."
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-4"
+              className="w-full p-3 border text-gray-900 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-4"
               autoFocus
               onKeyPress={(e) => e.key === 'Enter' && handleCreateChat()}
             />
