@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { SettingsIcon, ChevronDownIcon, ChevronRightIcon, RefreshCwIcon, LoaderIcon, FileTextIcon, CpuIcon } from 'lucide-react'
 import useAppStore from '../../store/useAppStore'
+import config from '../../config'
 
 const RightSidebar = ({ isMobile = false }) => {
   const [expandedAgents, setExpandedAgents] = useState(new Set())
@@ -216,7 +217,7 @@ const ContextTab = ({ accumulatedContext, contextMessages, contextBuildingMode }
 
     setLoadingStatus(true)
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/context-chat/sessions/${contextSessionId}/status`, {
+      const response = await fetch(`${config.apiUrl}/api/v1/context-chat/sessions/${contextSessionId}/status`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

@@ -5,6 +5,7 @@ import ConversationFlow from '../ui/ConversationFlow'
 import AIResponseCard from '../ui/AIResponseCard'
 import ClarificationDialog from '../ui/ClarificationDialog'
 import ConversationStatePanel from '../ui/ConversationStatePanel'
+import config from '../../config'
 
 
 const CenterColumn = ({ activeProject }) => {
@@ -186,7 +187,7 @@ const CenterColumn = ({ activeProject }) => {
       console.log('🎯 Generando prompts para las IAs:', suggestedQuestion)
 
       // Generar los prompts usando el sistema correcto con prompt_templates.py
-      const finalizeResponse = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSession.session_id}/generate-ai-prompts`, {
+      const finalizeResponse = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${contextSession.session_id}/generate-ai-prompts`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -241,7 +242,7 @@ const CenterColumn = ({ activeProject }) => {
       console.log('🎯 Generando prompts para las IAs con pregunta del input:', userQuestion)
 
       // Generar los prompts usando la pregunta del input
-      const finalizeResponse = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSessionId}/generate-ai-prompts`, {
+      const finalizeResponse = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${contextSessionId}/generate-ai-prompts`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -306,7 +307,7 @@ const CenterColumn = ({ activeProject }) => {
 
       if (contextSession?.session_id) {
         // Si hay sesión de contexto, usarla
-        queryResponse = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSession.session_id}/query-ais`, {
+        queryResponse = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${contextSession.session_id}/query-ais`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -321,7 +322,7 @@ const CenterColumn = ({ activeProject }) => {
         // Si no hay sesión de contexto, crear una temporal
         console.log('🆕 Creando sesión temporal para consulta directa')
         
-        const contextResponse = await fetch(`http://localhost:8000/api/v1/context-chat/projects/${activeProject.id}/context-chat`, {
+        const contextResponse = await fetch(`${config.apiUrl}/api/v1/context-chat/projects/${activeProject.id}/context-chat`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -340,7 +341,7 @@ const CenterColumn = ({ activeProject }) => {
         const contextData = await contextResponse.json()
         const tempSessionId = contextData.session_id
 
-        queryResponse = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${tempSessionId}/query-ais`, {
+        queryResponse = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${tempSessionId}/query-ais`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -406,7 +407,7 @@ const CenterColumn = ({ activeProject }) => {
 
       console.log(`🔄 Reintentando ${provider.toUpperCase()}:`, suggestedQuestion)
 
-      const retryResponse = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSession.session_id}/retry-ai/${provider}`, {
+      const retryResponse = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${contextSession.session_id}/retry-ai/${provider}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -470,7 +471,7 @@ const CenterColumn = ({ activeProject }) => {
 
       console.log('📝 Generando prompt del moderador para sesión:', contextSession.session_id)
 
-      const response = await fetch(`http://localhost:8000/api/v1/context-chat/context-sessions/${contextSession.session_id}/generate-moderator-prompt`, {
+      const response = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${contextSession.session_id}/generate-moderator-prompt`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -537,7 +538,7 @@ const CenterColumn = ({ activeProject }) => {
       let sessionId = contextSessionId
       if (!sessionId) {
         console.log('📝 Creando sesión de contexto para el prompt...')
-        const contextResponse = await fetch(`http://localhost:8000/api/v1/context-chat/projects/${activeProject.id}/context-chat`, {
+        const contextResponse = await fetch(`${config.apiUrl}/api/v1/context-chat/projects/${activeProject.id}/context-chat`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -559,7 +560,7 @@ const CenterColumn = ({ activeProject }) => {
       }
 
       // Llamar al nuevo endpoint de generar prompt
-      const response = await fetch(`http://localhost:8000/api/v1/context-chat/projects/${activeProject.id}/generate-prompt`, {
+      const response = await fetch(`${config.apiUrl}/api/v1/context-chat/projects/${activeProject.id}/generate-prompt`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -619,7 +620,7 @@ const CenterColumn = ({ activeProject }) => {
       console.log('🚀 Ejecutando prompt:', currentPromptId, 'usar editado:', useEditedVersion)
 
       // Llamar al endpoint de ejecutar prompt
-      const response = await fetch(`http://localhost:8000/api/v1/context-chat/prompts/${currentPromptId}/execute`, {
+      const response = await fetch(`${config.apiUrl}/api/v1/context-chat/prompts/${currentPromptId}/execute`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -714,7 +715,7 @@ const CenterColumn = ({ activeProject }) => {
     try {
       console.log('💾 Guardando prompt editado:', editingPromptId)
 
-      const response = await fetch(`http://localhost:8000/api/v1/context-chat/prompts/${editingPromptId}`, {
+      const response = await fetch(`${config.apiUrl}/api/v1/context-chat/prompts/${editingPromptId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
