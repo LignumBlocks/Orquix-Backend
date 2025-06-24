@@ -28,9 +28,10 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
     
     token = credentials.credentials
     
-    # 🔐 MODO DESARROLLO: Aceptar token mock
-    if settings.ENVIRONMENT == "development" and token == "dev-mock-token-12345":
-        logger.info("🔐 Usando autenticación mock para desarrollo")
+    # 🔐 MODO DESARROLLO/TESTING: Aceptar token mock
+    # TODO: Remover en producción final cuando tengamos autenticación real
+    if token == "dev-mock-token-12345":
+        logger.info(f"🔐 Usando autenticación mock en {settings.ENVIRONMENT}")
         return SessionUser(
             id="550e8400-e29b-41d4-a716-446655440000",  # UUID válido para desarrollo
             name="Developer User",
