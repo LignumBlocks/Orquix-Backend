@@ -3,8 +3,11 @@ from uuid import UUID
 from datetime import datetime
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
+import logging
 
-from app.models.models import Chat
+from app.models.models import Chat, Session, InteractionEvent
+
+logger = logging.getLogger(__name__)
 
 
 async def create_chat(
@@ -112,13 +115,56 @@ async def unarchive_chat(db: AsyncSession, chat_id: UUID) -> Optional[Chat]:
 
 
 async def delete_chat(db: AsyncSession, chat_id: UUID) -> bool:
-    """Eliminar un chat (soft delete)."""
+    """Eliminar un chat y todas sus sesiones e interacciones asociadas (soft delete en cascada)."""
     chat = await get_chat(db, chat_id)
     if not chat:
+        logger.warning(f"🚫 Intento de eliminar chat inexistente: {chat_id}")
         return False
     
+    logger.info(f"🗑️ Iniciando eliminación en cascada del chat: {chat_id} - '{chat.title}'")
+    
+    # Obtener todas las sesiones del chat
+    sessions_statement = select(Session).where(
+        Session.chat_id == chat_id,
+        Session.deleted_at.is_(None)
+    )
+    sessions_result = await db.exec(sessions_statement)
+    sessions = sessions_result.all()
+    
+    logger.info(f"📋 Encontradas {len(sessions)} sesiones para eliminar")
+    
+    # Para cada sesión, eliminar sus interacciones
+    session_ids = [session.id for session in sessions]
+    total_interactions = 0
+    
+    if session_ids:
+        # Eliminar todas las interacciones de las sesiones (soft delete)
+        interactions_statement = select(InteractionEvent).where(
+            InteractionEvent.session_id.in_(session_ids),
+            InteractionEvent.deleted_at.is_(None)
+        )
+        interactions_result = await db.exec(interactions_statement)
+        interactions = interactions_result.all()
+        
+        total_interactions = len(interactions)
+        logger.info(f"💬 Encontradas {total_interactions} interacciones para eliminar")
+        
+        # Marcar interacciones como eliminadas
+        for interaction in interactions:
+            interaction.deleted_at = datetime.utcnow()
+    
+    # Eliminar todas las sesiones del chat (soft delete)
+    for session in sessions:
+        session.deleted_at = datetime.utcnow()
+    
+    # Finalmente eliminar el chat (soft delete)
     chat.deleted_at = datetime.utcnow()
+    
     await db.commit()
+    
+    logger.info(f"✅ Chat eliminado exitosamente: {chat_id}")
+    logger.info(f"📊 Resumen eliminación: 1 chat, {len(sessions)} sesiones, {total_interactions} interacciones")
+    
     return True
 
 

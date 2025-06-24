@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { ChevronDownIcon, ChevronRightIcon, PlusIcon, XIcon, MessageSquareIcon, TrashIcon, LoaderIcon } from 'lucide-react'
 import ProjectModal from '../ui/ProjectModal'
 import CreateProjectModal from '../ui/CreateProjectModal'
+import ConfirmDialog from '../ui/ConfirmDialog'
 import useAppStore from '../../store/useAppStore'
 
 const LeftSidebar = ({ 
@@ -18,6 +19,11 @@ const LeftSidebar = ({
   const [showCreateChatModal, setShowCreateChatModal] = useState(false)
   const [selectedProjectForChat, setSelectedProjectForChat] = useState(null)
   const [newChatTitle, setNewChatTitle] = useState('')
+  
+  // Estados para confirmación de eliminación
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [chatToDelete, setChatToDelete] = useState(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // Zustand store
   const {
@@ -124,16 +130,32 @@ const LeftSidebar = ({
     }
   }
 
-  const handleDeleteChat = async (chatId, projectId, e) => {
+  const handleDeleteChatClick = (chatId, projectId, chatTitle, e) => {
     e.stopPropagation() // Evitar que se seleccione el chat al hacer click en eliminar
     
-    if (confirm('¿Estás seguro de que quieres eliminar este chat?')) {
-      try {
-        await deleteChat(chatId, projectId)
-      } catch (error) {
-        console.error('Error deleting chat:', error)
-      }
+    setChatToDelete({ chatId, projectId, chatTitle })
+    setShowDeleteConfirm(true)
+  }
+
+  const confirmDeleteChat = async () => {
+    if (!chatToDelete) return
+    
+    setIsDeleting(true)
+    try {
+      await deleteChat(chatToDelete.chatId, chatToDelete.projectId)
+      setShowDeleteConfirm(false)
+      setChatToDelete(null)
+    } catch (error) {
+      console.error('Error deleting chat:', error)
+      // El error se mostrará en el store, no necesitamos manejarlo aquí
+    } finally {
+      setIsDeleting(false)
     }
+  }
+
+  const cancelDeleteChat = () => {
+    setShowDeleteConfirm(false)
+    setChatToDelete(null)
   }
 
   const openCreateChatModal = (project, e) => {
@@ -248,7 +270,7 @@ const LeftSidebar = ({
                         </button>
                         
                         <button
-                          onClick={(e) => handleDeleteChat(chat.id, project.id, e)}
+                          onClick={(e) => handleDeleteChatClick(chat.id, project.id, chat.title, e)}
                           className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-all ml-1"
                           title="Eliminar chat"
                         >
@@ -345,6 +367,24 @@ const LeftSidebar = ({
           </div>
         </div>
       )}
+
+      {/* Confirm Delete Dialog */}
+      <ConfirmDialog
+        isOpen={showDeleteConfirm}
+        onClose={cancelDeleteChat}
+        onConfirm={confirmDeleteChat}
+        title="Eliminar Chat"
+        message={
+          chatToDelete 
+            ? `¿Estás seguro de que quieres eliminar el chat "${chatToDelete.chatTitle}"? Esta acción no se puede deshacer y se perderán todas las conversaciones y sesiones asociadas.`
+            : "¿Estás seguro de que quieres eliminar este chat?"
+        }
+        confirmText="Eliminar"
+        cancelText="Cancelar"
+        confirmButtonClass="bg-red-600 hover:bg-red-700 text-white"
+        isDestructive={true}
+        isLoading={isDeleting}
+      />
     </div>
   )
 }
