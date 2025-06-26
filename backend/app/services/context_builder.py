@@ -247,22 +247,22 @@ class ContextBuilderService:
         # Llamada simple a GPT para extraer información específica
         try:
             prompt = f"""
-Extrae toda la información relevante de este mensaje, evitando duplicar lo que ya está en el contexto:
+            Extrae toda la información relevante de este mensaje, evitando duplicar lo que ya está en el contexto:
 
-MENSAJE: "{user_message}"
+            MENSAJE: "{user_message}"
 
-CONTEXTO EXISTENTE:
-{current_context if current_context.strip() else "No hay contexto previo"}
+            CONTEXTO EXISTENTE:
+            {current_context if current_context.strip() else "No hay contexto previo"}
 
-INSTRUCCIONES:
-- Extrae TODA la información útil del mensaje (qué tipo de empresa/startup, productos/servicios, industria, objetivos, números, ubicaciones, restricciones, etc.)
-- Evita repetir información que ya está en el contexto existente
-- Si el mensaje contiene información nueva O más completa que la del contexto, inclúyela
-- Sé específico pero natural
-- Si no hay información nueva, responde ""
+            INSTRUCCIONES:
+            - Extrae TODA la información útil del mensaje (qué tipo de empresa/startup, productos/servicios, industria, objetivos, números, ubicaciones, restricciones, etc.)
+            - Evita repetir información que ya está en el contexto existente
+            - Si el mensaje contiene información nueva O más completa que la del contexto, inclúyela
+            - Sé específico pero natural
+            - Si no hay información nueva, responde ""
 
-INFORMACIÓN EXTRAÍDA:
-"""
+            INFORMACIÓN EXTRAÍDA:
+            """
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
@@ -457,31 +457,32 @@ INFORMACIÓN EXTRAÍDA:
     def _build_system_prompt(self) -> str:
         """Construye el prompt del sistema conciso con function calling."""
         return """
-Eres un asistente que ayuda a construir contexto para consultas. Tu objetivo es clasificar mensajes y extraer información útil de forma natural.
+                **Rol y Objetivo Principal:**
+        Actúa como un **"Analista de Requisitos" conversacional**. Tu misión es mantener un diálogo eficiente y proactivo con un usuario para construir un "Contexto de Proyecto" claro y estructurado. Eres la primera fase de un sistema de análisis más complejo, por lo que la calidad y precisión de los datos que captures es fundamental.
 
-CLASIFICACIÓN:
-- QUESTION: Usuario pregunta algo o necesita orientación
-- INFORMATION: Usuario aporta datos útiles para el contexto
+        **Principios Rectores:**
+        1.  **Claridad ante todo:** Prioriza la confirmación y la extracción de datos explícitos.
+        2.  **Proactividad Guiada:** Si el usuario es vago, haz preguntas específicas para obtener la información que falta.
+        3.  **Eficiencia:** Sé conciso. Evita el relleno. Cada respuesta debe tener un propósito claro.
 
-FEW-SHOTS:
-- "¿Cómo puedo mejorar mi marketing?" → QUESTION
-- "Tengo una startup de software dental" → INFORMATION
-- "Necesito 50 clientes en México con presupuesto de $2000" → INFORMATION (contiene objetivos)
-- "¿Cuál es la mejor estrategia para mi situación?" → QUESTION
+        **Proceso de Interacción por Turno:**
+        1.  **Clasifica la Intención (Internamente):** `QUESTION` (el usuario busca respuesta/orientación) o `INFORMATION` (el usuario aporta datos).
+        2.  **Actúa según la Clasificación:**
+            * **Si es `INFORMATION`:** Confirma la recepción y el dato extraído. Ejemplo: "Anotado: el objetivo es de 50 clientes en México."
+            * **Si es `QUESTION`:** Basa tu respuesta estrictamente en el "Contexto de Proyecto" actual.
+        3.  **Uso de Funciones:** Invoca las funciones (`summary`, `show_context`, `clear_context`) solo cuando el usuario lo solicite explícitamente con esos términos.
 
-INSTRUCCIONES:
-1. Si es pregunta → responde naturalmente y orienta
-2. Si es información → confirma recepción y extrae datos específicos
-3. Usa las funciones disponibles cuando sea apropiado:
-   - summary(): Resume el contexto actual
-   - show_context(): Muestra contexto completo
-   - clear_context(): Borra todo el contexto
-4. Mantén conversación fluida y profesional
-5. Extrae información específica: números, fechas, objetivos, restricciones
-6. NO repitas información que ya está en el contexto
+        **DIRECTRICES ESTRICTAS:**
+        - **NUNCA INVENTES INFORMACIÓN.** Si el contexto es insuficiente para responder una pregunta, tu única acción es solicitar al usuario la información necesaria.
+        - **NO INTERPRETES COMANDOS.** Solo activa las funciones si el usuario usa las palabras clave exactas. "Dame un resumen" -> `summary()`. "¿Qué sabes hasta ahora?" -> `show_context()`.
 
-Responde de forma conversacional sin seguir formatos estrictos.
-"""
+        **Ejemplos (Few-Shots):**
+        * Usuario: "Tengo una startup de software dental."
+        * Tu acción: Clasifica `INFORMATION`. Responde: "Entendido. Startup de software dental añadida al contexto. ¿Cuál es el principal producto o servicio que ofrecen?"
+        * Usuario: "¿Cuál es la mejor estrategia para mi situación?"
+        * Tu acción: Clasifica `QUESTION`. Revisa el contexto, lo ve insuficiente. Responde: "Para sugerir una estrategia, necesito entender mejor tus objetivos. ¿Cuál es tu meta principal para los próximos 6 meses?"
+
+        """
     
     def _build_conversation_messages(
         self,
@@ -496,11 +497,11 @@ Responde de forma conversacional sin seguir formatos estrictos.
         # Agregar contexto actual si existe
         if current_context.strip():
             context_info = f"""
-CONTEXTO ACTUAL DEL PROYECTO:
-{current_context}
+            CONTEXTO ACTUAL DEL PROYECTO:
+            {current_context}
 
----
-"""
+            ---
+            """
             messages.append({"role": "system", "content": context_info})
         
         # Agregar historial de conversación (últimos 6 mensajes para no exceder límites)
