@@ -116,7 +116,6 @@ class ContextChatResponse(BaseModel):
     accumulated_context: str
     suggestions: List[str] = []
     context_elements_count: int = 0
-    suggested_final_question: Optional[str] = None
 
 class ContextFinalizeRequest(BaseModel):
     session_id: UUID
@@ -417,10 +416,47 @@ async def context_chat(
             current_context=session.accumulated_context
         )
         
-        # Procesar mensaje con GPT-3.5 usando el contexto mejorado
+        # Obtener historial real de interaction_events de la sesión
+        from app.crud import interaction as interaction_crud
+        conversation_history = []
+        try:
+            timeline_events = await interaction_crud.get_session_timeline(
+                db=db,
+                session_id=db_session.id,
+                limit=50  # Últimos 50 eventos para el chat
+            )
+            
+            logger.info(f"📜 Historial cargado: {len(timeline_events)} eventos para sesión {db_session.id}")
+            
+            # Convertir eventos a mensajes de conversación
+            for event in timeline_events:
+                if event.event_type == "user_message":
+                    conversation_history.append(ContextMessage(
+                        role="user",
+                        content=event.content,
+                        timestamp=event.created_at,
+                        message_type="user"
+                    ))
+                    logger.info(f"📝 Usuario: {event.content[:50]}...")
+                elif event.event_type == "ai_response":
+                    conversation_history.append(ContextMessage(
+                        role="assistant", 
+                        content=event.content,
+                        timestamp=event.created_at,
+                        message_type="assistant"
+                    ))
+                    logger.info(f"🤖 IA: {event.content[:50]}...")
+            
+            logger.info(f"💬 Historial final: {len(conversation_history)} mensajes para el Context Builder")
+            
+        except Exception as e:
+            logger.error(f"Error obteniendo historial de conversación: {e}")
+            conversation_history = []  # Usar historial vacío en caso de error
+        
+        # Procesar mensaje con GPT-3.5 usando el historial real de la sesión
         response = await context_builder_service.process_user_message(
             user_message=request.user_message,
-            conversation_history=session.conversation_history,
+            conversation_history=conversation_history,
             current_context=enhanced_context
         )
         
@@ -450,13 +486,27 @@ async def context_chat(
             updated_context=response.accumulated_context
         )
         
-        # Actualizar sesión con respuesta de la IA
-        await _update_context_session_compat(
+        # Crear evento para la respuesta de la IA
+        await interaction_crud.create_timeline_event(
             db=db,
-            session_data=db_session,
-            new_message=ai_message,
-            updated_context=response.accumulated_context
+            session_id=db_session.id,
+            event_type="ai_response",
+            content=response.ai_response,
+            event_data={
+                "message_type": response.message_type,
+                "suggestions": response.suggestions,
+                "context_elements_count": response.context_elements_count,
+                "timestamp": datetime.utcnow().isoformat()
+            },
+            project_id=db_session.project_id,
+            user_id=db_session.user_id
         )
+        
+        # Actualizar contexto acumulado en la sesión
+        await session_crud.update_session_context(db, db_session.id, response.accumulated_context)
+        
+        # Hacer commit final
+        await db.commit()
         
         logger.info(f"✅ Context chat procesado - Sesión: {response.session_id}")
         return response

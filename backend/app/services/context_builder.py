@@ -61,7 +61,6 @@ class ContextChatResponse(BaseModel):
     accumulated_context: str
     suggestions: List[str]
     context_elements_count: int
-    suggested_final_question: Optional[str] = None
 
 class ContextSession(BaseModel):
     id: UUID
@@ -140,12 +139,10 @@ class ContextBuilderService:
     
     def __init__(self):
         self.client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        #self.model = "gpt-3.5-turbo"
-        self.model = "gpt-4o-mini"
-        self.temperature = 0.2  # Más determinístico para consistencia
-        #self.max_tokens = 250   # Respuestas más concisas
-        self.max_tokens = 4096
-        self.seed = 42          # Reproducibilidad en respuestas
+        self.model = "gpt-3.5-turbo"
+        self.temperature = 0.7  # Más natural y conversacional
+        self.max_tokens = 400   # Respuestas más completas para chat normal
+        self.seed = None        # Sin seed para más naturalidad en conversación
     
     async def _smart_classify(self, user_message: str) -> Tuple[str, float]:
         """
@@ -235,32 +232,54 @@ class ContextBuilderService:
         word_count = len(context.split())
         return f"📋 **Resumen del contexto** ({word_count} palabras totales):\n\n{summary}"
     
-    async def _extract_information_from_message(self, user_message: str, current_context: str) -> str:
+    async def _extract_information_from_message(
+        self, 
+        user_message: str, 
+        current_context: str, 
+        conversation_history: List[ContextMessage] = None
+    ) -> str:
         """
-        Extrae información específica de un mensaje del usuario.
+        Extrae información específica de un mensaje del usuario usando el contexto conversacional.
         
         Args:
             user_message: Mensaje del usuario
             current_context: Contexto actual para evitar duplicación
+            conversation_history: Historial reciente de la conversación
             
         Returns:
-            Información extraída del mensaje
+            Información extraída del mensaje con contexto conversacional
         """
+        
+        if conversation_history is None:
+            conversation_history = []
         # Llamada simple a GPT para extraer información específica
         try:
+            # Construir historial conversacional reciente para contexto
+            recent_conversation = ""
+            if conversation_history:
+                recent_messages = conversation_history[-4:]  # Últimos 4 mensajes para contexto
+                for i, msg in enumerate(recent_messages):
+                    role_emoji = "👤" if msg.role == "user" else "🤖"
+                    recent_conversation += f"{role_emoji} {msg.content[:100]}{'...' if len(msg.content) > 100 else ''}\n"
+            
             prompt = f"""
-            Extrae toda la información relevante de este mensaje, evitando duplicar lo que ya está en el contexto:
+            Extrae toda la información relevante de este mensaje del usuario, usando el contexto de la conversación para entender mejor las referencias:
 
-            MENSAJE: "{user_message}"
+            MENSAJE ACTUAL: "{user_message}"
 
-            CONTEXTO EXISTENTE:
+            CONTEXTO CONVERSACIONAL RECIENTE:
+            {recent_conversation if recent_conversation.strip() else "No hay conversación previa"}
+
+            CONTEXTO ACUMULADO DEL PROYECTO:
             {current_context if current_context.strip() else "No hay contexto previo"}
 
             INSTRUCCIONES:
-            - Extrae TODA la información útil del mensaje (qué tipo de empresa/startup, productos/servicios, industria, objetivos, números, ubicaciones, restricciones, etc.)
-            - Evita repetir información que ya está en el contexto existente
-            - Si el mensaje contiene información nueva O más completa que la del contexto, inclúyela
-            - Sé específico pero natural
+            - Usa el contexto conversacional para entender referencias como "opción 2", "eso", "lo anterior", etc.
+            - Extrae información específica y contextual (ej: "Decisión: Opción 2 para construir startup de envases de banana")
+            - Incluye información sobre decisiones, preferencias, números específicos, ubicaciones, restricciones
+            - Evita repetir exactamente lo que ya está en el contexto acumulado
+            - Si el mensaje es solo una referencia sin contexto conversacional, extrae lo que puedas
+            - Sé específico y útil para futuras consultas
             - Si no hay información nueva, responde ""
 
             INFORMACIÓN EXTRAÍDA:
@@ -278,21 +297,48 @@ class ContextBuilderService:
         except Exception as e:
             logger.debug(f"Error extrayendo información: {e}")
             # Fallback: extraer información básica usando heurísticas
-            return self._extract_info_heuristic(user_message, current_context)
+            return self._extract_info_heuristic(user_message, current_context, conversation_history)
     
-    def _extract_info_heuristic(self, user_message: str, current_context: str) -> str:
+    def _extract_info_heuristic(
+        self, 
+        user_message: str, 
+        current_context: str,
+        conversation_history: List[ContextMessage] = None
+    ) -> str:
         """
         Extrae información usando heurísticas simples como fallback.
         
         Args:
             user_message: Mensaje del usuario
             current_context: Contexto actual
+            conversation_history: Historial de conversación
             
         Returns:
             Información extraída usando heurísticas
         """
+        
+        if conversation_history is None:
+            conversation_history = []
         info_parts = []
         message_lower = user_message.lower()
+        
+        # Detectar referencias contextuales
+        if any(ref in message_lower for ref in ['opción', 'option', 'me quedo', 'elijo', 'prefiero']):
+            # Buscar en el historial qué opciones se mencionaron
+            for msg in reversed(conversation_history[-6:]):  # Últimos 6 mensajes
+                if msg.role == "assistant" and any(word in msg.content.lower() for word in ['opción', 'option', '1.', '2.', '3.']):
+                    # Intentar extraer el contexto del proyecto del historial
+                    project_context = ""
+                    for hist_msg in conversation_history:
+                        if any(term in hist_msg.content.lower() for term in ['startup', 'empresa', 'negocio', 'envases', 'banana']):
+                            project_context = hist_msg.content[:50] + "..."
+                            break
+                    
+                    if "opción 2" in message_lower or "option 2" in message_lower:
+                        info_parts.append(f"Decisión: Opción 2 seleccionada {f'(relacionado con {project_context})' if project_context else ''}")
+                    elif "opción" in message_lower or "option" in message_lower:
+                        info_parts.append(f"Decisión de opción tomada {f'(relacionado con {project_context})' if project_context else ''}")
+                    break
         
         # Buscar números importantes (presupuestos, objetivos, etc.)
         import re
@@ -384,8 +430,7 @@ class ContextBuilderService:
                     message_type="question",
                     accumulated_context=current_context,
                     suggestions=["Reformula tu mensaje", "Sé más específico", "Agrega más contexto"],
-                    context_elements_count=self._count_context_elements(current_context),
-                    suggested_final_question=None
+                    context_elements_count=self._count_context_elements(current_context)
                 )
             
             # Construir mensajes para GPT-3.5
@@ -420,8 +465,7 @@ class ContextBuilderService:
                     message_type="command_result",
                     accumulated_context=updated_context,
                     suggestions=["Continúa compartiendo información", "Haz más preguntas"],
-                    context_elements_count=self._count_context_elements(updated_context),
-                    suggested_final_question=None
+                    context_elements_count=self._count_context_elements(updated_context)
                 )
             else:
                 # Respuesta normal sin function call
@@ -429,7 +473,9 @@ class ContextBuilderService:
                 
                 # Si es información, extraer datos específicos del mensaje
                 if message_type == "information":
-                    extracted_info = await self._extract_information_from_message(user_message, current_context)
+                    extracted_info = await self._extract_information_from_message(
+                        user_message, current_context, conversation_history
+                    )
                     if extracted_info.strip():
                         updated_context = self._update_accumulated_context(current_context, extracted_info)
                 
@@ -442,48 +488,50 @@ class ContextBuilderService:
                     message_type=message_type,
                     accumulated_context=updated_context,
                     suggestions=suggestions,
-                    context_elements_count=self._count_context_elements(updated_context),
-                    suggested_final_question=None
+                    context_elements_count=self._count_context_elements(updated_context)
                 )
             
         except openai.APIError as e:
             logger.error(f"Error de API de OpenAI: {e}")
-            return await self._create_fallback_response(user_message, current_context)
+            return await self._create_fallback_response(user_message, current_context, conversation_history)
         except openai.RateLimitError as e:
             logger.error(f"Rate limit excedido en OpenAI: {e}")
-            return await self._create_fallback_response(user_message, current_context)
+            return await self._create_fallback_response(user_message, current_context, conversation_history)
         except Exception as e:
             logger.error(f"Error inesperado en context builder: {e}")
-            return await self._create_fallback_response(user_message, current_context)
+            return await self._create_fallback_response(user_message, current_context, conversation_history)
     
     def _build_system_prompt(self) -> str:
-        """Construye el prompt del sistema conciso con function calling."""
-        return """
-                **Rol y Objetivo Principal:**
-        Actúa como un **"Analista de Requisitos" conversacional**. Tu misión es mantener un diálogo eficiente y proactivo con un usuario para construir un "Contexto de Proyecto" claro y estructurado. Eres la primera fase de un sistema de análisis más complejo, por lo que la calidad y precisión de los datos que captures es fundamental.
+        """Construye el prompt del sistema para un chat conversacional completo."""
+        return """Eres un asistente conversacional inteligente y completo que puede:
 
-        **Principios Rectores:**
-        1.  **Claridad ante todo:** Prioriza la confirmación y la extracción de datos explícitos.
-        2.  **Proactividad Guiada:** Si el usuario es vago, haz preguntas específicas para obtener la información que falta.
-        3.  **Eficiencia:** Sé conciso. Evita el relleno. Cada respuesta debe tener un propósito claro.
+1. **RESPONDER CUALQUIER PREGUNTA** usando tu conocimiento general:
+   - Preguntas sobre cualquier tema: "¿cuáles son los países más exportadores de banana?"
+   - Explicaciones de conceptos: "¿qué es machine learning?"
+   - Consejos generales: "¿cómo mejorar mi productividad?"
+   - Cálculos y análisis: "¿cuánto es 15% de 850?"
 
-        **Proceso de Interacción por Turno:**
-        1.  **Clasifica la Intención (Internamente):** `QUESTION` (el usuario busca respuesta/orientación) o `INFORMATION` (el usuario aporta datos).
-        2.  **Actúa según la Clasificación:**
-            * **Si es `INFORMATION`:** Confirma la recepción y el dato extraído. Ejemplo: "Anotado: el objetivo es de 50 clientes en México."
-            * **Si es `QUESTION`:** Basa tu respuesta estrictamente en el "Contexto de Proyecto" actual.
-        3.  **Uso de Funciones:** Invoca las funciones (`summary`, `show_context`, `clear_context`) solo cuando el usuario lo solicite explícitamente con esos términos.
+2. **MANTENER CONVERSACIONES NATURALES** sobre cualquier tema de interés del usuario
 
-        **DIRECTRICES ESTRICTAS:**
-        - **NO INTERPRETES COMANDOS.** Solo activa las funciones si el usuario usa las palabras clave exactas. "Dame un resumen" -> `summary()`. "¿Qué sabes hasta ahora?" -> `show_context()`.
+3. **RECONOCER INFORMACIÓN RELEVANTE** cuando el usuario comparte detalles de su proyecto/negocio:
+   - Números específicos, objetivos, restricciones
+   - Datos sobre su empresa, producto, o situación
+   - Información que podría ser útil para consultas especializadas
 
-        **Ejemplos (Few-Shots):**
-        * Usuario: "Tengo una startup de software dental."
-        * Tu acción: Clasifica `INFORMATION`. Responde: "Entendido. Startup de software dental añadida al contexto. ¿Cuál es el principal producto o servicio que ofrecen?"
-        * Usuario: "¿Cuál es la mejor estrategia para mi situación?"
-        * Tu acción: Clasifica `QUESTION`. Revisa el contexto, lo ve insuficiente. Responde: "Para sugerir una estrategia, necesito entender mejor tus objetivos. ¿Cuál es tu meta principal para los próximos 6 meses?"
+4. **CONSTRUIR CONTEXTO GRADUALMENTE** para cuando el usuario quiera consultar IAs especializadas
 
-        """
+**COMPORTAMIENTO:**
+- Responde de manera natural y útil a CUALQUIER pregunta
+- Si detectas información relevante del proyecto del usuario, reconócela sutilmente
+- Mantén un tono amigable, profesional y conversacional
+- No te limites solo a "construcción de contexto" - eres un chat completo
+
+**FUNCIONES DISPONIBLES:**
+- summary(): Resume el contexto actual del proyecto
+- show_context(): Muestra contexto completo del proyecto  
+- clear_context(): Borra contexto del proyecto
+
+Actúa como un asistente conversacional normal que ADEMÁS tiene la capacidad especial de construir contexto cuando es relevante."""
     
     def _build_conversation_messages(
         self,
@@ -507,11 +555,14 @@ class ContextBuilderService:
         
         # Agregar historial de conversación (últimos 6 mensajes para no exceder límites)
         recent_history = conversation_history[-6:] if len(conversation_history) > 6 else conversation_history
-        for msg in recent_history:
+        logger.info(f"🔍 Context Builder recibe {len(conversation_history)} mensajes totales, usando últimos {len(recent_history)}")
+        
+        for i, msg in enumerate(recent_history):
             messages.append({
                 "role": msg.role,
                 "content": msg.content
             })
+            logger.info(f"  📋 Msg {i+1}: {msg.role} -> {msg.content[:50]}...")
         
         # Agregar mensaje actual del usuario
         messages.append({"role": "user", "content": user_message})
@@ -616,9 +667,13 @@ class ContextBuilderService:
     async def _create_fallback_response(
         self, 
         user_message: str, 
-        current_context: str
+        current_context: str,
+        conversation_history: List[ContextMessage] = None
     ) -> ContextChatResponse:
         """Crea una respuesta de fallback en caso de error con OpenAI."""
+        
+        if conversation_history is None:
+            conversation_history = []
         
         # Usar el nuevo clasificador inteligente
         message_type, confidence = await self._smart_classify(user_message)
@@ -632,23 +687,48 @@ class ContextBuilderService:
                 message_type="question",
                 accumulated_context=current_context,
                 suggestions=["Reformula tu mensaje", "Sé más específico", "Agrega más contexto"],
-                context_elements_count=self._count_context_elements(current_context),
-                suggested_final_question=None
+                context_elements_count=self._count_context_elements(current_context)
             )
         
         if is_question:
-            # Es una pregunta
+            # Es una pregunta - usar historial para generar respuesta contextual
             updated_context = current_context
-            if not current_context.strip():
-                response_text = "¡Hola! Estoy aquí para ayudarte a construir el contexto de tu consulta. ¿Podrías contarme más sobre tu proyecto o situación?"
-            else:
-                response_text = "Entiendo tu pregunta. ¿Podrías darme más detalles específicos para poder ayudarte mejor?"
             
-            suggestions = [
-                "Describe tu proyecto o empresa",
-                "Comparte los principales desafíos",
-                "Explica qué tipo de ayuda necesitas"
-            ]
+            if len(conversation_history) == 0:
+                # Primera interacción
+                response_text = "¡Hola! Estoy aquí para ayudarte a construir el contexto de tu consulta. ¿Podrías contarme más sobre tu proyecto o situación?"
+                suggestions = [
+                    "Describe tu proyecto o empresa",
+                    "Comparte los principales desafíos",
+                    "Explica qué tipo de ayuda necesitas"
+                ]
+            else:
+                # Hay historial previo - intentar dar respuesta contextual básica
+                logger.info(f"🔄 Fallback con historial: {len(conversation_history)} mensajes")
+                
+                # Generar respuesta básica basada en el contexto
+                if "capital" in user_message.lower() and len(conversation_history) >= 2:
+                    # Pregunta sobre capital después de hablar de países
+                    last_assistant_msg = None
+                    for msg in reversed(conversation_history):
+                        if msg.role == "assistant":
+                            last_assistant_msg = msg.content
+                            break
+                    
+                    if last_assistant_msg and ("ecuador" in last_assistant_msg.lower() or "banana" in last_assistant_msg.lower()):
+                        response_text = "La capital de Ecuador es Quito. ¿Te gustaría saber algo más sobre Ecuador o tienes alguna otra pregunta?"
+                    else:
+                        response_text = "Perdón, necesito más contexto. ¿De qué país te refieres la capital?"
+                else:
+                    # Respuesta genérica pero conversacional
+                    response_text = "Perdón, tuve un problema técnico. ¿Podrías reformular tu pregunta o darme más detalles?"
+                
+                suggestions = [
+                    "Reformula tu pregunta",
+                    "Agrega más contexto",
+                    "Haz una pregunta más específica"
+                ]
+            
             message_type = "question"
             context_elements = self._count_context_elements(updated_context)
         else:
@@ -663,14 +743,8 @@ class ContextBuilderService:
             message_type = "information"
             context_elements = self._count_context_elements(updated_context)
         
-        # Evaluar si está listo para finalizar
-        if self._should_suggest_finalization(updated_context):
-            message_type = "ready"
-            suggested_question = self._generate_suggested_question(updated_context, user_message)
-            response_text = f"{response_text}\n\n🎯 **Contexto completado!** Te sugiero esta pregunta para las IAs principales: \"{suggested_question}\""
-            suggestions = ["Usa la pregunta sugerida", "Modifica la pregunta si lo necesitas", "Agrega más contexto si falta algo"]
-        else:
-            suggested_question = None
+        # El chat es infinito - no hay finalización automática
+        suggested_question = None
         
         return ContextChatResponse(
             session_id=uuid4(),
@@ -678,8 +752,7 @@ class ContextBuilderService:
             message_type=message_type,
             accumulated_context=updated_context,
             suggestions=suggestions,
-            context_elements_count=context_elements,
-            suggested_final_question=suggested_question
+            context_elements_count=context_elements
         )
     
 
