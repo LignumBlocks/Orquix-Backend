@@ -475,7 +475,6 @@ class ContextBuilderService:
         3.  **Uso de Funciones:** Invoca las funciones (`summary`, `show_context`, `clear_context`) solo cuando el usuario lo solicite explícitamente con esos términos.
 
         **DIRECTRICES ESTRICTAS:**
-        - **NUNCA INVENTES INFORMACIÓN.** Si el contexto es insuficiente para responder una pregunta, tu única acción es solicitar al usuario la información necesaria.
         - **NO INTERPRETES COMANDOS.** Solo activa las funciones si el usuario usa las palabras clave exactas. "Dame un resumen" -> `summary()`. "¿Qué sabes hasta ahora?" -> `show_context()`.
 
         **Ejemplos (Few-Shots):**
