@@ -140,9 +140,11 @@ class ContextBuilderService:
     
     def __init__(self):
         self.client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        self.model = "gpt-3.5-turbo"
+        #self.model = "gpt-3.5-turbo"
+        self.model = "gpt-4o-mini"
         self.temperature = 0.2  # Más determinístico para consistencia
-        self.max_tokens = 250   # Respuestas más concisas
+        #self.max_tokens = 250   # Respuestas más concisas
+        self.max_tokens = 4096
         self.seed = 42          # Reproducibilidad en respuestas
     
     async def _smart_classify(self, user_message: str) -> Tuple[str, float]:
