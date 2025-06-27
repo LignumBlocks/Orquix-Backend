@@ -170,227 +170,6 @@ const CenterColumn = ({ activeProject }) => {
     }
   }
 
-  const handleGeneratePrompts = async () => {
-    if (!contextSession?.session_id || !activeProject?.id) {
-      setError('No hay sesión de contexto o proyecto activo')
-      return
-    }
-
-    setIsSendingToAIs(true)
-    setError(null)
-
-    try {
-      // Obtener la última interacción para conseguir la pregunta sugerida
-      const lastInteraction = conversationFlow[conversationFlow.length - 1]
-      const suggestedQuestion = lastInteraction?.suggested_final_question || "¿Qué recomendaciones me puedes dar basándote en este contexto?"
-
-      console.log('🎯 Generando prompts para las IAs:', suggestedQuestion)
-
-      // Generar los prompts usando el sistema correcto con prompt_templates.py
-      const finalizeResponse = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${contextSession.session_id}/generate-ai-prompts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer dev-mock-token-12345'
-        },
-        body: JSON.stringify({
-          session_id: contextSession.session_id,
-          final_question: suggestedQuestion
-        })
-      })
-
-      if (!finalizeResponse.ok) {
-        throw new Error(`Error al finalizar sesión: ${finalizeResponse.status}`)
-      }
-
-      const finalizeData = await finalizeResponse.json()
-      console.log('📋 Prompts generados con prompt_templates.py:', finalizeData)
-
-      // Agregar los prompts generados al flujo conversacional
-      const promptsInteraction = {
-        id: Date.now() + 1,
-        type: 'prompts_generated',
-        user_question: suggestedQuestion,
-        prompts: finalizeData.ai_prompts || {},
-        context_used: finalizeData.context_used || '',
-        prompt_system: finalizeData.prompt_system || 'query_service + prompt_templates',
-        timestamp: new Date()
-      }
-
-      setConversationFlow(prev => [...prev, promptsInteraction])
-
-    } catch (error) {
-      console.error('Error al generar prompts:', error)
-      setError(error.message || 'Error al generar prompts para las IAs')
-    } finally {
-      setIsSendingToAIs(false)
-    }
-  }
-
-  // Nueva función que usa la pregunta del input directamente
-  const handleGeneratePromptsWithQuestion = async (userQuestion) => {
-    if (!contextSessionId || !activeProject?.id) {
-      setError('No hay sesión de contexto o proyecto activo')
-      return
-    }
-
-    setIsSendingToAIs(true)
-    setError(null)
-    setMessage('') // Limpiar el input después de tomar la pregunta
-
-    try {
-      console.log('🎯 Generando prompts para las IAs con pregunta del input:', userQuestion)
-
-      // Generar los prompts usando la pregunta del input
-      const finalizeResponse = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${contextSessionId}/generate-ai-prompts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer dev-mock-token-12345'
-        },
-        body: JSON.stringify({
-          session_id: contextSessionId,
-          final_question: userQuestion
-        })
-      })
-
-      if (!finalizeResponse.ok) {
-        throw new Error(`Error al generar prompts: ${finalizeResponse.status}`)
-      }
-
-      const finalizeData = await finalizeResponse.json()
-      console.log('📋 Prompts generados con pregunta del input:', finalizeData)
-
-      // Agregar los prompts generados al flujo conversacional
-      const promptsInteraction = {
-        id: Date.now() + 1,
-        type: 'prompts_generated',
-        user_question: userQuestion,
-        prompts: finalizeData.ai_prompts || {},
-        context_used: finalizeData.context_used || '',
-        prompt_system: finalizeData.prompt_system || 'query_service + prompt_templates',
-        timestamp: new Date()
-      }
-
-      setConversationFlow(prev => [...prev, promptsInteraction])
-
-    } catch (error) {
-      console.error('Error al generar prompts:', error)
-      setError(error.message || 'Error al generar prompts para las IAs')
-    } finally {
-      setIsSendingToAIs(false)
-    }
-  }
-
-  const handleQueryAIs = async (customQuestion = null) => {
-    if (!activeProject?.id) {
-      setError('No hay proyecto activo')
-      return
-    }
-
-    setIsQueryingAIs(true)
-    setError(null)
-
-    try {
-      let userQuestion = customQuestion
-      
-      if (!userQuestion) {
-        // Obtener la pregunta de la última interacción de prompts generados
-        const promptsInteraction = conversationFlow.find(interaction => interaction.type === 'prompts_generated')
-        userQuestion = promptsInteraction?.user_question || "¿Qué recomendaciones me puedes dar basándote en este contexto?"
-      }
-
-      console.log('🤖 Consultando IAs:', userQuestion)
-      console.log('🔍 Session ID:', contextSession?.session_id || 'No disponible')
-
-      let queryResponse
-
-      if (contextSession?.session_id) {
-        // Si hay sesión de contexto, usarla
-        queryResponse = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${contextSession.session_id}/query-ais`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer dev-mock-token-12345'
-          },
-          body: JSON.stringify({
-            session_id: contextSession.session_id,
-            final_question: userQuestion
-          })
-        })
-      } else {
-        // Si no hay sesión de contexto, crear una temporal
-        console.log('🆕 Creando sesión temporal para consulta directa')
-        
-        const contextResponse = await fetch(`${config.apiUrl}/api/v1/context-chat/projects/${activeProject.id}/context-chat`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer dev-mock-token-12345'
-          },
-                  body: JSON.stringify({
-          user_message: userQuestion,
-          session_id: null
-        })
-        })
-
-        if (!contextResponse.ok) {
-          throw new Error(`Error creando sesión temporal: ${contextResponse.status}`)
-        }
-
-        const contextData = await contextResponse.json()
-        const tempSessionId = contextData.session_id
-
-        queryResponse = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${tempSessionId}/query-ais`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer dev-mock-token-12345'
-          },
-          body: JSON.stringify({
-            session_id: tempSessionId,
-            final_question: userQuestion
-          })
-        })
-      }
-
-      if (!queryResponse.ok) {
-        throw new Error(`Error al consultar IAs: ${queryResponse.status}`)
-      }
-
-      const queryData = await queryResponse.json()
-      console.log('🤖 Respuestas recibidas:', queryData)
-
-      // Limpiar el input si se usó una pregunta personalizada
-      if (customQuestion) {
-        setMessage('')
-      }
-
-      // Agregar las respuestas al flujo conversacional
-      const aiResponsesInteraction = {
-        id: Date.now() + 2,
-        type: 'ai_responses',
-        user_question: userQuestion,
-        individual_responses: queryData.individual_responses || [],
-        total_processing_time_ms: queryData.total_processing_time_ms,
-        successful_responses: queryData.successful_responses,
-        total_responses: queryData.total_responses,
-        context_used: queryData.context_used || (accumulatedContext ? 'Contexto acumulado utilizado' : 'Sin contexto previo'),
-        timestamp: new Date()
-      }
-
-      setConversationFlow(prev => [...prev, aiResponsesInteraction])
-
-    } catch (error) {
-      console.error('Error al consultar IAs:', error)
-      setError(error.message || 'Error al consultar las IAs')
-    } finally {
-      setIsQueryingAIs(false)
-    }
-  }
-
-
-
   const handleRetryAI = async (provider) => {
     if (!contextSession?.session_id) {
       setError('No hay sesión de contexto activa')
@@ -456,60 +235,6 @@ const CenterColumn = ({ activeProject }) => {
     }
   }
 
-  const handleGenerateModeratorPrompt = async () => {
-    if (!contextSession?.session_id) {
-      setError('No hay sesión de contexto activa')
-      return
-    }
-
-    setIsGeneratingModeratorPrompt(true)
-    setError(null)
-
-    try {
-      const lastInteraction = conversationFlow[conversationFlow.length - 1]
-      const userQuestion = lastInteraction?.user_question || "¿Qué recomendaciones me puedes dar?"
-
-      console.log('📝 Generando prompt del moderador para sesión:', contextSession.session_id)
-
-      const response = await fetch(`${config.apiUrl}/api/v1/context-chat/context-sessions/${contextSession.session_id}/generate-moderator-prompt`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer dev-mock-token-12345'
-        },
-        body: JSON.stringify({
-          session_id: contextSession.session_id,
-          final_question: userQuestion
-        })
-      })
-
-      if (!response.ok) {
-        throw new Error(`Error generando prompt del moderador: ${response.status}`)
-      }
-
-      const promptData = await response.json()
-      console.log('📝 Prompt del moderador generado:', promptData)
-
-      setModeratorPromptData(promptData)
-
-      // Agregar el prompt al flujo conversacional
-      const promptInteraction = {
-        id: Date.now() + 100,
-        type: 'moderator_prompt_generated',
-        prompt_data: promptData,
-        timestamp: new Date()
-      }
-
-      setConversationFlow(prev => [...prev, promptInteraction])
-
-    } catch (error) {
-      console.error('Error generando prompt del moderador:', error)
-      setError(`Error generando prompt del moderador: ${error.message}`)
-    } finally {
-      setIsGeneratingModeratorPrompt(false)
-    }
-  }
-
   // Función handleSynthesizeResponses eliminada - ahora todo se hace automáticamente en el endpoint /execute
 
   // ==========================================
@@ -527,81 +252,84 @@ const CenterColumn = ({ activeProject }) => {
       return
     }
 
+    // Verificar que tengamos una sesión de contexto activa
+    if (!contextSessionId) {
+      setError('No hay sesión de contexto activa. Inicia una conversación primero.')
+      return
+    }
+
     setIsOrchestrating(true)
     setError(null)
 
     try {
       const userQuery = message.trim()
-      console.log('🎯 Generando prompt para orquestación:', userQuery)
+      console.log('🚀 Iniciando flujo completo de orquestación:', userQuery, 'para sesión:', contextSessionId)
 
-      // Si no hay contextSessionId, crear una sesión de contexto primero
-      let sessionId = contextSessionId
-      if (!sessionId) {
-        console.log('📝 Creando sesión de contexto para el prompt...')
-        const contextResponse = await fetch(`${config.apiUrl}/api/v1/context-chat/projects/${activeProject.id}/context-chat`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer dev-mock-token-12345'
-          },
-          body: JSON.stringify({
-            user_message: userQuery,
-            context_session_id: null
-          })
-        })
-
-        if (!contextResponse.ok) {
-          throw new Error(`Error creando sesión de contexto: ${contextResponse.status}`)
-        }
-
-        const contextData = await contextResponse.json()
-        sessionId = contextData.session_id
-        console.log('✅ Sesión de contexto creada:', sessionId)
-      }
-
-      // Llamar al nuevo endpoint de generar prompt
-      const response = await fetch(`${config.apiUrl}/api/v1/context-chat/projects/${activeProject.id}/generate-prompt`, {
+      // ✨ NUEVO: Usar el endpoint único que hace todo el flujo completo
+      const response = await fetch(`${config.apiUrl}/api/v1/context-chat/sessions/${contextSessionId}/orchestrate-and-generate-prompt`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer dev-mock-token-12345'
         },
         body: JSON.stringify({
-          query: userQuery,
-          context_session_id: sessionId
+          session_id: contextSessionId,
+          target_query: userQuery
         })
       })
 
       if (!response.ok) {
-        throw new Error(`Error al generar prompt: ${response.status}`)
+        const errorData = await response.json().catch(() => null)
+        throw new Error(errorData?.detail || `Error al orquestar y generar prompt: ${response.status}`)
       }
 
-      const promptData = await response.json()
-      console.log('✅ Prompt generado:', promptData)
+      const orchestrationData = await response.json()
+      console.log('✅ Flujo completo de orquestación completado:', orchestrationData)
 
-      // Guardar el sessionId para usar en la síntesis
-      setSynthesisSessionId(sessionId)
-      console.log('🔄 SessionId guardado para síntesis:', sessionId)
+      // Extraer datos de la respuesta
+      const { orchestration, prompt, next_steps } = orchestrationData
 
       // Guardar el prompt generado
-      setCurrentPromptId(promptData.prompt_id)
-      setGeneratedPrompt(promptData)
+      setCurrentPromptId(prompt.prompt_id)
+      setGeneratedPrompt({
+        prompt_id: prompt.prompt_id,
+        generated_prompt: prompt.generated_prompt,
+        status: prompt.status,
+        created_at: prompt.created_at
+      })
       setMessage('') // Limpiar el input
 
-      // Agregar el prompt generado al flujo conversacional
-      const promptInteraction = {
+      // Agregar el prompt generado al flujo conversacional (mantener compatibilidad con renderizado existente)
+      const orchestrationInteraction = {
         id: Date.now(),
         type: 'prompt_generated',
         user_query: userQuery,
-        prompt_data: promptData,
+        // Datos de orquestación (para logs)
+        orchestration: {
+          session_id: orchestration.session_id,
+          target_query: orchestration.target_query,
+          refined_context: orchestration.refined_context,
+          processed_messages_count: orchestration.processed_messages_count
+        },
+        // Datos del prompt (para renderizado)
+        prompt_data: {
+          prompt_id: prompt.prompt_id,
+          generated_prompt: prompt.generated_prompt,
+          status: prompt.status,
+          created_at: prompt.created_at
+        },
+        next_steps,
         timestamp: new Date()
       }
 
-      setConversationFlow(prev => [...prev, promptInteraction])
+      setConversationFlow(prev => [...prev, orchestrationInteraction])
+
+      console.log('🎯 Contexto refinado creado con', orchestration.processed_messages_count, 'mensajes procesados')
+      console.log('📝 Prompt generado con ID:', prompt.prompt_id)
 
     } catch (error) {
-      console.error('❌ Error generando prompt:', error)
-      setError(error.message || 'Error al generar el prompt')
+      console.error('❌ Error en flujo de orquestación completo:', error)
+      setError(error.message || 'Error al realizar la orquestación completa')
     } finally {
       setIsOrchestrating(false)
     }

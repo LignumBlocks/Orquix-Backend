@@ -471,15 +471,10 @@ class ContextBuilderService:
                 # Respuesta normal sin function call
                 ai_response = choice.message.content or "¿Podrías darme más detalles?"
                 
-                # Si es información, extraer datos específicos del mensaje
-                if message_type == "information":
-                    extracted_info = await self._extract_information_from_message(
-                        user_message, current_context, conversation_history
-                    )
-                    if extracted_info.strip():
-                        updated_context = self._update_accumulated_context(current_context, extracted_info)
+                # El contexto no se actualiza en chat diario - solo se mantiene el historial conversacional
+                updated_context = current_context
                 
-                # Generar sugerencias contextuales
+                # Generar sugerencias contextuales (función existente)
                 suggestions = self._generate_contextual_suggestions(message_type, updated_context)
                 
                 return ContextChatResponse(
@@ -663,6 +658,167 @@ Actúa como un asistente conversacional normal que ADEMÁS tiene la capacidad es
         # Contar párrafos no vacíos
         elements = [line.strip() for line in context.split('\n') if line.strip()]
         return len(elements)
+    
+    async def package_context_for_orchestration(
+        self,
+        target_query: str,
+        conversation_history: List[ContextMessage]
+    ) -> str:
+        """
+        Función clave: Refina el historial conversacional completo en un contexto 
+        de alta calidad específicamente diseñado para el panel de IAs expertas.
+        
+        Esta es la "magia" de nuestra nueva arquitectura.
+        
+        Args:
+            target_query: La pregunta específica que el usuario quiere que respondan las IAs
+            conversation_history: Historial completo de la conversación
+            
+        Returns:
+            Contexto refinado y estructurado para orquestación
+        """
+        
+        if not conversation_history:
+            return f"**Consulta:** {target_query}\n\n**Contexto:** Sin información previa disponible."
+        
+        try:
+            # Construir el historial conversacional para el prompt
+            conversation_text = ""
+            for i, msg in enumerate(conversation_history, 1):
+                role_indicator = "👤 Usuario" if msg.role == "user" else "🤖 Asistente"
+                conversation_text += f"{i}. {role_indicator}: {msg.content}\n\n"
+            
+            # Prompt especializado de "Ingeniero de Contexto"
+            system_prompt = """**Rol:** Eres un "Ingeniero de Contexto". Tu única tarea es leer un historial de conversación y una pregunta final, y luego preparar un brief conciso y perfectamente relevante para un panel de IAs expertas.
+
+**Tu Tarea (Sigue estos pasos rigurosamente):**
+1. Lee la `target_query` para entender el objetivo preciso del análisis que se va a realizar.
+2. Revisa el `conversation_history` completo.
+3. **Extrae y sintetiza ÚNICAMENTE la información** (hechos, datos, decisiones previas, restricciones, objetivos mencionados) que sea **directamente relevante** para que las IAs puedan responder a la `target_query`.
+4. **Ignora todo el "ruido" conversacional:** saludos, agradecimientos, mensajes de "ok", correcciones de tipeo, preguntas ya respondidas en el hilo, y cualquier otra parte de la conversación que no aporte valor factual para la consulta final.
+5. **Estructura tu salida** como un "Brief de Consulta" limpio y bien organizado en Markdown.
+
+**Criterios de Relevancia Específicos:**
+- Datos numéricos (presupuestos, objetivos, métricas)
+- Decisiones tomadas ("elegí opción X", "me quedo con Y")
+- Restricciones y limitaciones mencionadas
+- Contexto geográfico y temporal
+- Información del negocio/industria/proyecto
+- Objetivos y metas específicas
+
+**Ejemplos de Ruido a Filtrar:**
+- Saludos: "Hola", "gracias", "perfecto"
+- Correcciones: "quise decir X en lugar de Y"
+- Confirmaciones vacías: "ok", "entendido", "genial"
+- Preguntas ya respondidas en el mismo hilo
+- Mensajes de cortesía sin información factual
+
+**Estructura del Output:**
+```markdown
+## 🎯 Consulta Principal
+[La pregunta específica que se va a analizar]
+
+## 📋 Contexto Relevante
+### Información del Proyecto/Negocio
+[Datos clave del proyecto, empresa, producto]
+
+### Decisiones y Preferencias
+[Decisiones tomadas, opciones elegidas]
+
+### Restricciones y Limitaciones
+[Limitaciones geográficas, presupuestarias, temporales]
+
+### Objetivos y Metas
+[Objetivos específicos mencionados]
+
+### Datos Numéricos Relevantes
+[Presupuestos, métricas, números importantes]
+```
+
+**Output:** Un único documento de texto estructurado que será enviado a las IAs expertas."""
+
+            user_prompt = f"""**Target Query:**
+{target_query}
+
+**Historial de Conversación Completo:**
+{conversation_text}
+
+Por favor, genera el Brief de Consulta siguiendo exactamente la estructura especificada:"""
+
+            # Llamada a GPT-4o-mini para máxima calidad en este paso crítico
+            response = await self.client.chat.completions.create(
+                model="gpt-4o-mini",  # Modelo más potente para este paso crítico
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,  # Muy bajo para máxima consistencia y precisión
+                max_tokens=1500   # Suficiente para contexto estructurado completo
+            )
+            
+            refined_context = response.choices[0].message.content.strip()
+            
+            logger.info(f"🎯 Contexto refinado para orquestación generado - Query: {target_query[:50]}...")
+            logger.info(f"📊 Historial procesado: {len(conversation_history)} mensajes → Contexto refinado: {len(refined_context)} caracteres")
+            
+            return refined_context
+            
+        except Exception as e:
+            logger.error(f"Error en package_context_for_orchestration: {e}")
+            # Fallback: crear contexto básico manualmente
+            return self._create_fallback_orchestration_context(target_query, conversation_history)
+    
+    def _create_fallback_orchestration_context(
+        self,
+        target_query: str,
+        conversation_history: List[ContextMessage]
+    ) -> str:
+        """Fallback para crear contexto de orquestación en caso de error con GPT."""
+        
+        # Extraer información clave usando heurísticas
+        key_info = []
+        decisions = []
+        numbers = []
+        
+        import re
+        
+        for msg in conversation_history:
+            if msg.role == "user":
+                content_lower = msg.content.lower()
+                
+                # Detectar decisiones
+                if any(word in content_lower for word in ['elijo', 'me quedo', 'prefiero', 'opción']):
+                    decisions.append(msg.content[:100])
+                
+                # Detectar números importantes
+                found_numbers = re.findall(r'\b\d+[,.]?\d*\b', msg.content)
+                if found_numbers:
+                    numbers.extend(found_numbers)
+                
+                # Detectar información de negocio
+                if any(word in content_lower for word in ['startup', 'empresa', 'negocio', 'producto']):
+                    key_info.append(msg.content[:150])
+        
+        # Construir contexto básico
+        context_parts = [f"## 🎯 Consulta Principal\n{target_query}\n"]
+        
+        if key_info:
+            context_parts.append("## 📋 Información del Proyecto")
+            for info in key_info[:3]:  # Top 3
+                context_parts.append(f"- {info}")
+            context_parts.append("")
+        
+        if decisions:
+            context_parts.append("## ✅ Decisiones Tomadas")
+            for decision in decisions[:3]:  # Top 3
+                context_parts.append(f"- {decision}")
+            context_parts.append("")
+        
+        if numbers:
+            context_parts.append("## 📊 Datos Numéricos")
+            context_parts.append(f"- Números mencionados: {', '.join(set(numbers[:5]))}")
+        
+        return "\n".join(context_parts)
     
     async def _create_fallback_response(
         self, 

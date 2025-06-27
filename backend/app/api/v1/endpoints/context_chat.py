@@ -121,6 +121,17 @@ class ContextFinalizeRequest(BaseModel):
     session_id: UUID
     final_question: str
 
+class OrchestrationRequest(BaseModel):
+    session_id: UUID
+    target_query: str
+
+class OrchestrationResponse(BaseModel):
+    session_id: UUID
+    target_query: str
+    refined_context: str
+    processed_messages_count: int
+    ready_for_ai_orchestration: bool
+
 class ContextSessionSummary(BaseModel):
     id: UUID
     project_id: UUID
@@ -416,41 +427,123 @@ async def context_chat(
             current_context=session.accumulated_context
         )
         
-        # Obtener historial real de interaction_events de la sesión
+        # ✅ CORREGIDO: Obtener historial completo del CHAT (no solo de la sesión)
         from app.crud import interaction as interaction_crud
         conversation_history = []
         try:
-            timeline_events = await interaction_crud.get_session_timeline(
-                db=db,
-                session_id=db_session.id,
-                limit=50  # Últimos 50 eventos para el chat
-            )
-            
-            logger.info(f"📜 Historial cargado: {len(timeline_events)} eventos para sesión {db_session.id}")
-            
-            # Convertir eventos a mensajes de conversación
-            for event in timeline_events:
-                if event.event_type == "user_message":
+            # 1. Obtener el chat_id de la sesión actual
+            session_obj = await session_crud.get_session(db, db_session.id)
+            if not session_obj:
+                logger.warning(f"⚠️ No se pudo obtener la sesión {db_session.id} del nuevo sistema")
+                conversation_history = []
+            else:
+                chat_id = session_obj.chat_id
+                logger.info(f"📊 Obteniendo historial completo del chat {chat_id} (no solo sesión {db_session.id})")
+                
+                # 2. Obtener todos los interaction_events del chat (de todas las sesiones)
+                from sqlalchemy import select, and_, or_
+                from app.models.models import InteractionEvent, Session
+                
+                # Query para obtener eventos de todas las sesiones de este chat
+                timeline_query = select(InteractionEvent).join(
+                    Session, InteractionEvent.session_id == Session.id
+                ).where(
+                    and_(
+                        Session.chat_id == chat_id,
+                        InteractionEvent.deleted_at.is_(None),
+                        or_(
+                            InteractionEvent.event_type == "user_message",
+                            InteractionEvent.event_type == "ai_response"
+                        )
+                    )
+                ).order_by(InteractionEvent.created_at.desc()).limit(100)  # Últimos 100 eventos del chat
+                
+                timeline_result = await db.execute(timeline_query)
+                timeline_events = timeline_result.scalars().all()
+                
+                logger.info(f"📜 Historial del chat cargado: {len(timeline_events)} eventos (user_message + ai_response)")
+                
+                # 3. Obtener respuestas del moderador de este chat
+                from app.models.models import IAResponse, IAPrompt
+                
+                # Query para obtener respuestas del moderador de todas las sesiones de este chat
+                moderator_query = select(IAResponse).join(
+                    IAPrompt, IAResponse.ia_prompt_id == IAPrompt.id
+                ).join(
+                    Session, IAPrompt.context_session_id == Session.id
+                ).where(
+                    and_(
+                        Session.chat_id == chat_id,
+                        IAResponse.ia_provider_name == "moderator",
+                        IAResponse.deleted_at.is_(None),
+                        IAResponse.error_message.is_(None)  # Solo respuestas exitosas
+                    )
+                ).order_by(IAResponse.received_at.desc()).limit(20)  # Últimas 20 síntesis del moderador
+                
+                moderator_result = await db.execute(moderator_query)
+                moderator_responses = moderator_result.scalars().all()
+                
+                logger.info(f"🔬 Respuestas del moderador encontradas: {len(moderator_responses)}")
+                
+                # 4. Combinar y ordenar cronológicamente todos los mensajes
+                all_messages = []
+                
+                # Agregar eventos de timeline (user_message + ai_response)
+                for event in timeline_events:
+                    if event.event_type == "user_message":
+                        all_messages.append({
+                            "role": "user",
+                            "content": event.content,
+                            "timestamp": event.created_at,
+                            "message_type": "user",
+                            "source": "interaction_event"
+                        })
+                    elif event.event_type == "ai_response":
+                        all_messages.append({
+                            "role": "assistant", 
+                            "content": event.content,
+                            "timestamp": event.created_at,
+                            "message_type": "assistant",
+                            "source": "interaction_event"
+                        })
+                
+                # Agregar respuestas del moderador
+                for moderator_resp in moderator_responses:
+                    all_messages.append({
+                        "role": "assistant",
+                        "content": moderator_resp.raw_response_text,
+                        "timestamp": moderator_resp.received_at,
+                        "message_type": "moderator_synthesis",
+                        "source": "moderator_response"
+                    })
+                
+                # 5. Ordenar cronológicamente (más antiguos primero para mantener el orden de conversación)
+                all_messages.sort(key=lambda x: x["timestamp"])
+                
+                # 6. Convertir a ContextMessage y tomar solo los más recientes
+                recent_messages = all_messages[-50:]  # Últimos 50 mensajes del chat
+                
+                for msg in recent_messages:
                     conversation_history.append(ContextMessage(
-                        role="user",
-                        content=event.content,
-                        timestamp=event.created_at,
-                        message_type="user"
+                        role=msg["role"],
+                        content=msg["content"],
+                        timestamp=msg["timestamp"],
+                        message_type=msg["message_type"]
                     ))
-                    logger.info(f"📝 Usuario: {event.content[:50]}...")
-                elif event.event_type == "ai_response":
-                    conversation_history.append(ContextMessage(
-                        role="assistant", 
-                        content=event.content,
-                        timestamp=event.created_at,
-                        message_type="assistant"
-                    ))
-                    logger.info(f"🤖 IA: {event.content[:50]}...")
-            
-            logger.info(f"💬 Historial final: {len(conversation_history)} mensajes para el Context Builder")
+                    
+                    # Log para debugging
+                    source_emoji = "📝" if msg["source"] == "interaction_event" and msg["role"] == "user" else \
+                                  "🤖" if msg["source"] == "interaction_event" and msg["role"] == "assistant" else \
+                                  "🔬"  # moderator
+                    logger.info(f"{source_emoji} {msg['message_type']}: {msg['content'][:50]}...")
+                
+                logger.info(f"💬 Historial final del chat: {len(conversation_history)} mensajes para el Context Builder")
+                logger.info(f"📊 Incluye: {len([m for m in recent_messages if m['source'] == 'interaction_event' and m['role'] == 'user'])} user_messages, "
+                           f"{len([m for m in recent_messages if m['source'] == 'interaction_event' and m['role'] == 'assistant'])} ai_responses, "
+                           f"{len([m for m in recent_messages if m['source'] == 'moderator_response'])} moderator_responses")
             
         except Exception as e:
-            logger.error(f"Error obteniendo historial de conversación: {e}")
+            logger.error(f"Error obteniendo historial completo del chat: {e}")
             conversation_history = []  # Usar historial vacío en caso de error
         
         # Procesar mensaje con GPT-3.5 usando el historial real de la sesión
@@ -687,398 +780,6 @@ async def get_active_context_session(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error obteniendo sesión activa: {str(e)}"
         )
-
-
-@router.post("/context-sessions/{session_id}/generate-ai-prompts")
-async def generate_ai_prompts(
-    session_id: UUID,
-    request: ContextFinalizeRequest,
-    current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Genera los prompts reales usando el query_service y prompt_templates.
-    Muestra exactamente los prompts que se enviarían a cada IA.
-    """
-    logger.info(f"🎯 Generando prompts usando query_service - Sesión: {session_id}")
-    
-    try:
-        # Verificar que la sesión existe y pertenece al usuario
-        session = await _get_context_session_compat(db, session_id)
-        if not session:
-            raise HTTPException(
-                status_code=404,
-                detail="Sesión de contexto no encontrada"
-            )
-        
-        user_id = UUID(current_user.id)  # Convertir string a UUID
-        if session.user_id != user_id:
-            raise HTTPException(
-                status_code=403,
-                detail="No tienes permiso para acceder a esta sesión"
-            )
-        
-        # Convertir a modelo Pydantic para acceder a los campos correctamente
-        session_model = _convert_session_to_context_session(session)
-        
-        # Importar los servicios correctos
-        from app.services.query_service import QueryService
-        from app.services.prompt_templates import PromptTemplateManager
-        from app.schemas.ai_response import AIProviderEnum
-        from app.schemas.query import QueryRequest, QueryType
-        from app.core.config import settings
-        
-        # Crear instancias de los servicios
-        query_service = QueryService()
-        prompt_manager = PromptTemplateManager()
-        
-        # Determinar proveedores disponibles
-        available_providers = []
-        if settings.OPENAI_API_KEY:
-            available_providers.append(AIProviderEnum.OPENAI)
-        if settings.ANTHROPIC_API_KEY:
-            available_providers.append(AIProviderEnum.ANTHROPIC)
-        
-        if not available_providers:
-            raise HTTPException(
-                status_code=500,
-                detail="No hay proveedores de IA configurados"
-            )
-        
-        # Crear una QueryRequest simulada para obtener los prompts
-        query_request = QueryRequest(
-            user_question=request.final_question,
-            query_type=QueryType.CONTEXT_AWARE,
-            user_id=user_id,
-            project_id=session.project_id,
-            max_tokens=1200,
-            temperature=0.7
-        )
-        
-        # Usar el contexto acumulado de la sesión
-        context_text = session_model.accumulated_context or ""
-        
-        # Generar prompts para cada proveedor usando el sistema oficial
-        ai_prompts = {}
-        
-        for provider in available_providers:
-            try:
-                # Usar el método oficial del query_service para construir prompts
-                prompt_data = prompt_manager.build_prompt_for_provider(
-                    provider=provider,
-                    user_question=query_request.user_question,
-                    context_text=context_text,
-                    additional_vars={
-                        'timestamp': datetime.utcnow().isoformat(),
-                        'project_name': f"Proyecto-{str(session.project_id)[:8]}"
-                    }
-                )
-                
-                # Optimizar el prompt para el proveedor
-                optimized_prompt = prompt_manager.optimize_prompt_for_provider(
-                    provider, prompt_data, query_request.max_tokens
-                )
-                
-                # Obtener modelo específico del proveedor
-                if provider == AIProviderEnum.OPENAI:
-                    model = "gpt-4o-mini"
-                elif provider == AIProviderEnum.ANTHROPIC:
-                    model = "claude-3-haiku-20240307"
-                else:
-                    model = "unknown"
-                
-                ai_prompts[provider.value.lower()] = {
-                    "provider": f"{provider.value.title()}",
-                    "model": model,
-                    "system_message": optimized_prompt['system_message'],
-                    "user_prompt": optimized_prompt['user_message'],
-                    "parameters": {
-                        "max_tokens": query_request.max_tokens,
-                        "temperature": query_request.temperature
-                    },
-                    "template_used": "prompt_templates_v2.0"
-                }
-                
-            except Exception as e:
-                logger.error(f"Error generando prompt para {provider}: {e}")
-                ai_prompts[provider.value.lower()] = {
-                    "provider": f"{provider.value.title()}",
-                    "error": f"Error generando prompt: {str(e)}"
-                }
-        
-        logger.info(f"✅ Prompts generados usando query_service para {len(ai_prompts)} proveedores")
-        
-        return {
-            "session_id": session_id,
-            "ai_prompts": ai_prompts,
-            "prompt_system": "query_service + prompt_templates",
-            "context_used": context_text[:200] + "..." if len(context_text) > 200 else context_text,
-            "final_question": request.final_question
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Error generando prompts con query_service: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error generando prompts: {str(e)}"
-        )
-
-
-@router.post("/context-sessions/{session_id}/query-ais")
-async def query_ais_individually(
-    session_id: UUID,
-    request: ContextFinalizeRequest,
-    current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Endpoint específico para enviar los prompts a las IAs y obtener respuestas individuales.
-    Se ejecuta después de generar los prompts.
-    """
-    logger.info(f"🤖 Consultando IAs individualmente - Sesión: {session_id}")
-    
-    try:
-        # Verificar que la sesión existe y pertenece al usuario
-        session = await _get_context_session_compat(db, session_id)
-        if not session:
-            raise HTTPException(
-                status_code=404,
-                detail="Sesión de contexto no encontrada"
-            )
-        
-        user_id = UUID(current_user.id)
-        if session.user_id != user_id:
-            raise HTTPException(
-                status_code=403,
-                detail="No tienes permiso para acceder a esta sesión"
-            )
-        
-        # Convertir a modelo Pydantic
-        session_model = _convert_session_to_context_session(session)
-        
-        # Importar servicios necesarios
-        from app.services.ai_orchestrator import AIOrchestrator
-        from app.schemas.ai_response import AIRequest, AIProviderEnum
-        from app.core.config import settings
-        import time
-        
-        # PASO 1: Generar prompts automáticamente usando PromptTemplateManager
-        from app.services.prompt_templates import PromptTemplateManager
-        prompt_manager = PromptTemplateManager()
-        
-        logger.info(f"🎯 Generando prompts automáticamente usando prompt_manager - Sesión: {session_id}")
-        
-        # Generar prompts para cada proveedor
-        prompts_by_provider = {}
-        context_text = session_model.accumulated_context or ""
-        
-        for provider in [AIProviderEnum.OPENAI, AIProviderEnum.ANTHROPIC]:
-            try:
-                prompt_dict = prompt_manager.build_prompt_for_provider(
-                    provider=provider,
-                    user_question=request.final_question,
-                    context_text=context_text
-                )
-                # Combinar system y user message en un solo prompt
-                full_prompt = f"{prompt_dict['system_message']}\n\n{prompt_dict['user_message']}"
-                
-                prompts_by_provider[provider.value.lower()] = {
-                    'prompt': full_prompt,
-                    'system_message': prompt_dict['system_message'],
-                    'user_message': prompt_dict['user_message']
-                }
-            except Exception as e:
-                logger.warning(f"Error generando prompt para {provider.value}: {e}")
-                # Fallback básico
-                fallback_prompt = f"Responde la siguiente pregunta en español basándote en el contexto proporcionado:\n\nContexto: {context_text}\n\nPregunta: {request.final_question}"
-                prompts_by_provider[provider.value.lower()] = {
-                    'prompt': fallback_prompt,
-                    'system_message': "Eres un asistente útil que responde en español.",
-                    'user_message': fallback_prompt
-                }
-        
-        # Crear estructura compatible con el código existente
-        prompts_result = {
-            'prompts_by_provider': prompts_by_provider,
-            'context_summary': context_text[:500] + "..." if len(context_text) > 500 else context_text
-        }
-        
-        logger.info(f"✅ Prompts generados para {len(prompts_by_provider)} proveedores")
-        
-        # PASO 2: Crear instancia del orquestador para enviar prompts
-        orchestrator = AIOrchestrator()
-        
-        # Usar los prompts generados en lugar de crear uno genérico
-        prompts_by_provider = prompts_result.get('prompts_by_provider', {})
-        
-        # Ejecutar consultas individuales a las IAs
-        start_time = time.time()
-        individual_responses = []
-        
-        # Obtener proveedores disponibles
-        available_providers = orchestrator.get_available_providers()
-        
-        # Consultar cada proveedor individualmente usando sus prompts específicos
-        for provider in available_providers:
-            provider_name = provider.value.lower()
-            logger.info(f"🤖 Consultando {provider.value.title()}...")
-            provider_start = time.time()
-            
-            # Obtener el prompt específico para este proveedor
-            provider_prompt_data = prompts_by_provider.get(provider_name, {})
-            if not provider_prompt_data:
-                logger.warning(f"⚠️ No se encontró prompt para {provider.value.title()}, saltando...")
-                continue
-            
-            prompt_text = provider_prompt_data.get('prompt', '')
-            if not prompt_text:
-                logger.warning(f"⚠️ Prompt vacío para {provider.value.title()}, saltando...")
-                continue
-            
-            try:
-                # Crear AIRequest específico para este proveedor
-                ai_request = AIRequest(
-                    prompt=prompt_text,
-                    max_tokens=1200,
-                    temperature=0.7,
-                    user_id=str(user_id),
-                    project_id=str(session.project_id)
-                )
-                
-                ai_response = await orchestrator.generate_single_response(
-                    request=ai_request,
-                    provider=provider
-                )
-                provider_time = time.time() - provider_start
-                
-                # Determinar modelo según el proveedor
-                model = "gpt-4o-mini" if provider == AIProviderEnum.OPENAI else "claude-3-haiku-20240307"
-                
-                if ai_response.status.value == "success":
-                    # PASO 3: Guardar prompt y respuesta en BD (sin bloquear si falla)
-                    try:
-                        await save_ia_response_with_prompt(
-                            db=db,
-                            project_id=session.project_id,
-                            provider=provider_name,
-                            prompt_text=prompt_text,
-                            response_text=ai_response.response_text,
-                            latency_ms=int(provider_time * 1000),
-                            user_question=request.final_question
-                        )
-                    except Exception as save_error:
-                        logger.warning(f"⚠️ Error guardando respuesta de {provider_name}: {save_error}")
-                    
-                    individual_responses.append({
-                        "provider": provider_name,
-                        "model": model,
-                        "content": ai_response.response_text,
-                        "processing_time_ms": int(provider_time * 1000),
-                        "success": True,
-                        "timestamp": datetime.utcnow().isoformat(),
-                        "prompt_used": prompt_text[:200] + "..." if len(prompt_text) > 200 else prompt_text
-                    })
-                    logger.info(f"✅ {provider.value.title()} respondió en {provider_time:.2f}s")
-                else:
-                    # Guardar error también (sin bloquear si falla)
-                    try:
-                        await save_ia_response_with_prompt(
-                            db=db,
-                            project_id=session.project_id,
-                            provider=provider_name,
-                            prompt_text=prompt_text,
-                            response_text="",
-                            latency_ms=int(provider_time * 1000),
-                            user_question=request.final_question,
-                            error_message=ai_response.error_message
-                        )
-                    except Exception as save_error:
-                        logger.warning(f"⚠️ Error guardando error de {provider_name}: {save_error}")
-                    
-                    individual_responses.append({
-                        "provider": provider_name,
-                        "model": model,
-                        "error": ai_response.error_message or "Error desconocido",
-                        "processing_time_ms": int(provider_time * 1000),
-                        "success": False,
-                        "timestamp": datetime.utcnow().isoformat(),
-                        "prompt_used": prompt_text[:200] + "..." if len(prompt_text) > 200 else prompt_text
-                    })
-                    logger.error(f"❌ Error en {provider.value.title()}: {ai_response.error_message}")
-                
-            except Exception as e:
-                provider_time = time.time() - provider_start
-                logger.error(f"❌ Error en {provider.value.title()}: {e}")
-                
-                # Guardar error en BD (sin bloquear si falla)
-                try:
-                    await save_ia_response_with_prompt(
-                        db=db,
-                        project_id=session.project_id,
-                        provider=provider_name,
-                        prompt_text=prompt_text,
-                        response_text="",
-                        latency_ms=int(provider_time * 1000),
-                        user_question=request.final_question,
-                        error_message=str(e)
-                    )
-                except Exception as save_error:
-                    logger.warning(f"⚠️ Error guardando excepción de {provider_name}: {save_error}")
-                
-                individual_responses.append({
-                    "provider": provider_name,
-                    "model": "gpt-4o-mini" if provider == AIProviderEnum.OPENAI else "claude-3-haiku-20240307",
-                    "error": str(e),
-                    "processing_time_ms": int(provider_time * 1000),
-                    "success": False,
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "prompt_used": prompt_text[:200] + "..." if len(prompt_text) > 200 else prompt_text
-                })
-        
-        total_time = time.time() - start_time
-        successful_responses = [r for r in individual_responses if r.get("success", False)]
-        
-        # Guardar las respuestas en la base de datos para uso posterior del moderador
-        try:
-            import json
-            ai_responses_data = {
-                "responses": individual_responses,
-                "user_question": request.final_question,
-                "timestamp": datetime.utcnow().isoformat(),
-                "total_processing_time_ms": int(total_time * 1000)
-            }
-            
-            # Actualizar la sesión con las respuestas de IAs
-            session.ai_responses_json = json.dumps(ai_responses_data)
-            await db.commit()
-            logger.info(f"💾 Respuestas guardadas en BD para sesión: {session_id}")
-            
-        except Exception as e:
-            logger.warning(f"⚠️ Error guardando respuestas en BD: {e}")
-            # No fallar el endpoint por esto, solo registrar el warning
-        
-        logger.info(f"✅ Consulta individual completada - {len(successful_responses)}/{len(individual_responses)} exitosas en {total_time:.2f}s")
-        
-        return {
-            "session_id": session_id,
-            "user_question": request.final_question,
-            "individual_responses": individual_responses,
-            "total_processing_time_ms": int(total_time * 1000),
-            "successful_responses": len(successful_responses),
-            "total_responses": len(individual_responses),
-            "prompts_generated": prompts_result,
-            "prompts_saved_to_db": True,
-            "context_used": prompts_result.get('context_summary', '')[:200] + "..." if len(prompts_result.get('context_summary', '')) > 200 else prompts_result.get('context_summary', ''),
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Error consultando IAs individualmente: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error consultando IAs: {str(e)}"
-        )
-
 
 @router.post("/context-sessions/{session_id}/retry-ai/{provider}")
 async def retry_single_ai(
@@ -2233,6 +1934,251 @@ async def get_project_context_sessions_summary(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error obteniendo resumen de sesiones: {str(e)}"
+        )
+
+
+async def orchestrate_context(
+    session_id: UUID,
+    request: OrchestrationRequest,
+    db: AsyncSession,
+    current_user: SessionUser
+):
+    """
+    🎯 **FUNCIÓN DE APOYO PARA ORQUESTACIÓN**
+    
+    Esta función implementa la lógica de orquestación que se reutiliza
+    internamente por el endpoint principal orchestrate-and-generate-prompt.
+    
+    NO es un endpoint público - es una función de apoyo interna que:
+    1. Toma el historial completo de conversación
+    2. Usa package_context_for_orchestration() para generar contexto refinado
+    3. Actualiza session.accumulated_context (para logs)
+    4. Retorna contexto listo para el AIOrchestrator
+    """
+    
+    try:
+        logger.info(f"🎯 Iniciando orquestación para sesión {session_id} - Query: {request.target_query[:100]}...")
+        
+        # 1. Obtener y validar la sesión
+        session_data = await _get_context_session_compat(db, session_id)
+        if not session_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sesión no encontrada"
+            )
+        
+        # 2. Validar permisos - Convertir IDs a UUID si es necesario
+        session_user_id = session_data.user_id
+        current_user_id = current_user.id
+        
+        # Asegurar que ambos sean UUID para comparación
+        if isinstance(session_user_id, str):
+            session_user_id = UUID(session_user_id)
+        if isinstance(current_user_id, str):
+            current_user_id = UUID(current_user_id)
+        
+        logger.info(f"🔐 Comparando permisos - Sesión user_id: {session_user_id}, Current user_id: {current_user_id}")
+        
+        if session_user_id != current_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes permisos para esta sesión"
+            )
+        
+        # 3. Cargar historial completo de interaction_events
+        from app.crud import interaction as interaction_crud
+        timeline_events = await interaction_crud.get_session_timeline(
+            db=db,
+            session_id=session_id,
+            limit=None  # Sin límite - queremos TODO el historial para orquestación
+        )
+        
+        # 4. Convertir eventos a formato ContextMessage
+        conversation_history = []
+        for event in timeline_events:
+            if event.event_type == "user_message":
+                conversation_history.append(ContextMessage(
+                    role="user",
+                    content=event.content,
+                    timestamp=event.created_at,
+                    message_type="user"
+                ))
+            elif event.event_type == "ai_response":
+                conversation_history.append(ContextMessage(
+                    role="assistant",
+                    content=event.content,
+                    timestamp=event.created_at,
+                    message_type="ai"
+                ))
+        
+        logger.info(f"📚 Historial cargado para orquestación: {len(conversation_history)} mensajes")
+        
+        # 5. ✨ AQUÍ ESTÁ LA MAGIA: package_context_for_orchestration()
+        from app.services.context_builder import context_builder_service
+        
+        refined_context = await context_builder_service.package_context_for_orchestration(
+            target_query=request.target_query,
+            conversation_history=conversation_history
+        )
+        
+        # 6. Actualizar session.accumulated_context (para logs y debugging)
+        from app.crud import session as session_crud
+        await session_crud.update_session_context(
+            db=db, 
+            session_id=session_id, 
+            accumulated_context=refined_context
+        )
+        
+        # 7. Crear evento de orquestación en el timeline
+        await interaction_crud.create_timeline_event(
+            db=db,
+            session_id=session_id,
+            event_type="orchestration_request",
+            content=request.target_query,
+            event_data={
+                "refined_context_length": len(refined_context),
+                "processed_messages": len(conversation_history),
+                "orchestration_timestamp": datetime.utcnow().isoformat()
+            },
+            project_id=session_data.project_id,
+            user_id=session_data.user_id
+        )
+        
+        await db.commit()
+        
+        logger.info(f"✅ Orquestación completada - Contexto refinado: {len(refined_context)} caracteres")
+        
+        return OrchestrationResponse(
+            session_id=session_id,
+            target_query=request.target_query,
+            refined_context=refined_context,
+            processed_messages_count=len(conversation_history),
+            ready_for_ai_orchestration=True
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error en orquestación: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interno al procesar orquestación: {str(e)}"
+        )
+
+
+@router.post(
+    "/sessions/{session_id}/orchestrate-and-generate-prompt",
+    response_model=Dict[str, Any],
+    summary="Orquestar Contexto y Generar Prompt",
+    description="Flujo completo: Orquesta el contexto y genera un prompt listo para IAs especializadas"
+)
+async def orchestrate_and_generate_prompt(
+    session_id: UUID,
+    request: OrchestrationRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: SessionUser = Depends(require_auth)
+):
+    """
+    🚀 **ENDPOINT DE FLUJO COMPLETO**
+    
+    Este endpoint implementa el flujo completo de nuestra nueva arquitectura:
+    1. Orquesta el contexto (package_context_for_orchestration)
+    2. Genera el prompt usando el contexto refinado
+    3. Retorna prompt listo para ejecutar con IAs
+    
+    Es el endpoint que usará el frontend para el botón [Orquestar y Sintetizar]
+    """
+    
+    try:
+        logger.info(f"🚀 Iniciando flujo completo de orquestación para sesión {session_id}")
+        
+        # 1. PASO 1: Orquestar contexto (reutilizar lógica del endpoint anterior)
+        orchestration_response = await orchestrate_context(session_id, request, db, current_user)
+        
+        logger.info(f"✅ Orquestación completada - Contexto refinado: {len(orchestration_response.refined_context)} chars")
+        
+        # 2. PASO 2: Obtener información de la sesión para el proyecto
+        session_data = await _get_context_session_compat(db, session_id)
+        if not session_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sesión no encontrada"
+            )
+        
+        # 3. PASO 3: Generar prompt usando el contexto refinado
+        from app.services.prompt_templates import PromptTemplateManager
+        from app.schemas.ai_response import AIProviderEnum
+        
+        prompt_manager = PromptTemplateManager()
+        prompt_data = prompt_manager.build_prompt_for_provider(
+            provider=AIProviderEnum.OPENAI,
+            user_question=request.target_query,
+            context_text=orchestration_response.refined_context  # 🎯 AQUÍ USAMOS EL CONTEXTO REFINADO
+        )
+        
+        # Combinar system y user message en un solo prompt
+        generated_prompt = f"{prompt_data['system_message']}\n\n{prompt_data['user_message']}"
+        
+        # 4. PASO 4: Guardar el prompt en la base de datos
+        ia_prompt = await ia_prompt_crud.create_ia_prompt(
+            db=db,
+            project_id=session_data.project_id,
+            context_session_id=session_id,
+            original_query=request.target_query,
+            generated_prompt=generated_prompt
+        )
+        
+        # 5. PASO 5: Crear evento de timeline para todo el flujo
+        await interaction_crud.create_timeline_event(
+            db=db,
+            session_id=session_id,
+            event_type="orchestration_and_prompt_generated",
+            content=f"Flujo completo: Orquestación + Prompt generado para: {request.target_query}",
+            event_data={
+                "prompt_id": str(ia_prompt.id),
+                "target_query": request.target_query,
+                "refined_context_length": len(orchestration_response.refined_context),
+                "prompt_length": len(generated_prompt),
+                "processed_messages": orchestration_response.processed_messages_count,
+                "flow_completed_at": datetime.utcnow().isoformat()
+            },
+            project_id=session_data.project_id,
+            user_id=session_data.user_id
+        )
+        
+        await db.commit()
+        
+        logger.info(f"🎉 Flujo completo completado - Prompt ID: {ia_prompt.id}")
+        
+        # 6. RETURN: Respuesta completa con toda la información
+        return {
+            "success": True,
+            "orchestration": {
+                "session_id": str(session_id),
+                "target_query": request.target_query,
+                "refined_context": orchestration_response.refined_context,
+                "processed_messages_count": orchestration_response.processed_messages_count
+            },
+            "prompt": {
+                "prompt_id": str(ia_prompt.id),
+                "generated_prompt": generated_prompt,
+                "status": ia_prompt.status,
+                "created_at": ia_prompt.created_at.isoformat()
+            },
+            "next_steps": {
+                "ready_for_ai_execution": True,
+                "execute_prompt_endpoint": f"/api/v1/context-chat/prompts/{ia_prompt.id}/execute",
+                "edit_prompt_endpoint": f"/api/v1/context-chat/prompts/{ia_prompt.id}"
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error en flujo completo de orquestación: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error en flujo completo: {str(e)}"
         )
 
  
